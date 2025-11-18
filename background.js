@@ -191,8 +191,7 @@ async function callOpenAI(apiKey, messages) {
             },
             body: JSON.stringify({
                 model: DEFAULT_MODEL,
-                messages: messages,
-                temperature: 0.5,
+                messages: messages
                  // max_tokens: 1000
             })
         });
