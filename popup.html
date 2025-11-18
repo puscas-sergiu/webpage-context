@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webpage Summarizer</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="chat">Chat</button>
+            <button class="tab-btn" data-tab="settings">Settings</button>
+        </div>
+
+        <!-- Chat Tab -->
+        <div id="chat" class="tab-content active">
+            <div id="chat-messages">
+                <div class="message system">Ready. Use buttons or type a message. Check Settings if needed.</div>
+            </div>
+            <div class="action-buttons">
+                 <button id="summarize-btn">Summarize Page</button>
+                 <!-- This button will be shown/hidden dynamically -->
+                 <button id="summarize-video-btn">Summarize Video (Insights)</button>
+                 <!-- Removed Follow-up button -->
+            </div>
+            <div class="input-area">
+                <input type="text" id="user-input" placeholder="Ask about the page/video content...">
+                <button id="send-btn">Send</button>
+            </div>
+             <div id="status-area" class="status"></div>
+        </div>
+
+        <!-- Settings Tab -->
+        <div id="settings" class="tab-content">
+            <label for="api-key">OpenAI API Key:</label>
+            <input type="password" id="api-key" placeholder="Enter your OpenAI API Key">
+             <button id="save-api-key">Save API Key</button>
+             <div id="settings-status" class="status"></div>
+             <p class="api-key-info">Your API key is stored securely in your browser's sync storage and only used to communicate with OpenAI.</p>
+        </div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>

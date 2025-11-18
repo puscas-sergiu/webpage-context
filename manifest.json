@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Webpage Summarizer & Chat",
+  "version": "1.1",
+  "description": "Summarize webpages/YouTube videos (captions) and chat about the content using OpenAI.",
+  "permissions": [
+    "activeTab",  "storage", "scripting"
+  ],
+  "host_permissions": [
+    "https://api.openai.com/"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
