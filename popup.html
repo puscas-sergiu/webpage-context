@@ -2,44 +2,77 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Webpage Summarizer</title>
+    <title>Webpage Summarizer & Chat</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <div class="container">
-        <div class="tabs">
-            <button class="tab-btn active" data-tab="chat">Chat</button>
-            <button class="tab-btn" data-tab="settings">Settings</button>
+    <header class="app-header">
+        <div id="page-info" class="page-info" title="Back to chat">
+            <img id="page-favicon" class="page-favicon" alt="" hidden>
+            <span id="page-title" class="page-title">Loading…</span>
         </div>
+        <div class="header-actions">
+            <button id="new-chat-btn" class="icon-btn" title="New chat (current chat is kept in History)">
+                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button id="nav-history" class="icon-btn" title="History">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+            </button>
+            <button id="nav-settings" class="icon-btn" title="Settings">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09A1.7 1.7 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09A1.7 1.7 0 0 0 20.91 10H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>
+            </button>
+        </div>
+    </header>
 
-        <!-- Chat Tab -->
-        <div id="chat" class="tab-content active">
-            <div id="chat-messages">
-                <div class="message system">Ready. Use buttons or type a message. Check Settings if needed.</div>
-            </div>
-            <div class="action-buttons">
-                 <button id="summarize-btn">Summarize Page</button>
-                 <!-- This button will be shown/hidden dynamically -->
-                 <button id="summarize-video-btn">Summarize Video (Insights)</button>
-                 <!-- Removed Follow-up button -->
-            </div>
-            <div class="input-area">
-                <input type="text" id="user-input" placeholder="Ask about the page/video content...">
-                <button id="send-btn">Send</button>
-            </div>
-             <div id="status-area" class="status"></div>
-        </div>
+    <div id="banner" class="banner" hidden></div>
 
-        <!-- Settings Tab -->
-        <div id="settings" class="tab-content">
-            <label for="api-key">OpenAI API Key:</label>
-            <input type="password" id="api-key" placeholder="Enter your OpenAI API Key">
-             <button id="save-api-key">Save API Key</button>
-             <div id="settings-status" class="status"></div>
-             <p class="api-key-info">Your API key is stored securely in your browser's sync storage and only used to communicate with OpenAI.</p>
+    <!-- Chat view -->
+    <section id="view-chat" class="view active">
+        <div id="chat-messages" class="chat-messages"></div>
+        <div id="status-bar" class="status-bar" hidden></div>
+        <div id="chips" class="chips"></div>
+        <div class="composer">
+            <textarea id="user-input" rows="1" placeholder="Ask about this page…"></textarea>
+            <button id="send-btn" class="send-btn" title="Send">
+                <svg id="send-icon" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+                <svg id="stop-icon" viewBox="0 0 24 24" hidden><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            </button>
         </div>
-    </div>
+    </section>
+
+    <!-- History view -->
+    <section id="view-history" class="view">
+        <div class="view-head">
+            <h2>History</h2>
+            <button id="clear-history-btn" class="text-btn danger">Clear all</button>
+        </div>
+        <div id="history-list" class="history-list"></div>
+    </section>
+
+    <!-- Settings view -->
+    <section id="view-settings" class="view">
+        <div class="view-head">
+            <h2>Settings</h2>
+        </div>
+        <label class="field-label" for="api-key">OpenAI API key</label>
+        <div class="key-row">
+            <input type="password" id="api-key" placeholder="sk-…" autocomplete="off">
+            <button id="toggle-key" class="icon-btn" title="Show / hide key">
+                <svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+        </div>
+        <label class="field-label" for="model-select">Model</label>
+        <select id="model-select">
+            <option value="gpt-5-nano-2025-08-07">gpt-5-nano — fast &amp; cheap (default)</option>
+            <option value="gpt-5-mini-2025-08-07">gpt-5-mini — smarter</option>
+            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+            <option value="gpt-4o-mini">gpt-4o-mini</option>
+        </select>
+        <button id="save-settings" class="primary-btn">Save &amp; test</button>
+        <div id="settings-status" class="status-line" hidden></div>
+        <p class="hint">Your key is stored in Chrome sync storage and only sent to api.openai.com. Conversations are saved locally on this device, per page — no account needed.</p>
+    </section>
+
     <script src="popup.js"></script>
 </body>
 </html>
