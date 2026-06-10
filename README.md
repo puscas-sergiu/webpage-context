@@ -1,14 +1,20 @@
 # Webpage Summarizer & Chat
 
-A Chrome extension that leverages OpenAI's API to summarize web pages and YouTube videos, with an interactive chat interface for deeper content exploration.
+A Chrome extension that lets you chat with any webpage or YouTube video using OpenAI — summaries, Q&A, key points. Conversations are saved locally per page, with a browsable history. No account needed.
 
 ## Features
 
-- **Webpage Summarization**: Extract and summarize the main content from any webpage
-- **YouTube Video Summarization**: Automatically extract video transcripts and generate detailed summaries with key learnings and actionable takeaways
-- **Interactive Chat**: Ask questions about the current page or video content with conversation history
-- **Automatic Transcript Panel**: Automatically opens YouTube transcript panels for seamless video analysis
-- **Smart Content Extraction**: Intelligently extracts meaningful content while filtering out navigation, ads, and other noise
+- **Webpage summarization** — extract and summarize the main content from any webpage
+- **YouTube video summarization** — automatically opens the transcript panel, extracts captions, and generates a summary with key learnings and takeaways
+- **Interactive chat** — ask follow-up questions about the page/video; the page content is extracted once and reused for the whole conversation
+- **Per-page persistence** — chats are saved locally (in `chrome.storage.local`) and keyed to the page URL. Close the popup, click elsewhere, restart the browser — reopen the popup on the same page and your conversation is right where you left it
+- **Chat history** — browse, reopen, continue, or delete past conversations from any page. Continuing an old chat reuses that page's saved content, even if you're no longer on the page
+- **Streaming responses** — answers render token-by-token; if the popup closes mid-response, the background finishes the generation and saves it
+- **Draft preservation** — text typed into the input box survives the popup closing
+- **Markdown rendering** — headings, bullets, bold, code blocks, and links in responses (HTML-escaped, no injection)
+- **Quick actions** — one-tap chips for "Summarize", "Key points", and "Explain simply"
+- **Dark mode** — follows your system theme
+- **Keyboard shortcut** — `Alt+Shift+S` opens the popup (configurable at `chrome://extensions/shortcuts`)
 
 ## Installation
 
@@ -30,110 +36,86 @@ A Chrome extension that leverages OpenAI's API to summarize web pages and YouTub
 
 ## Configuration
 
-### Setting up your OpenAI API Key
-
 1. Get your API key from [OpenAI's platform](https://platform.openai.com/api-keys)
-
-2. Click the extension icon in your Chrome toolbar
-
-3. Click the "Settings" (⚙️) button
-
-4. Enter your OpenAI API key
-
-5. Click "Save API Key"
-
-6. The extension will test your key and confirm if it's valid
+2. Click the extension icon — you'll be taken to Settings on first run
+3. Paste your OpenAI API key, optionally pick a model (defaults to `gpt-5-nano`)
+4. Click "Save & test" — the extension verifies the key works
 
 ## Usage
 
-### Summarizing a Webpage
+### Summarizing
 
-1. Navigate to any webpage
-2. Click the extension icon
-3. Click "Summarize Page"
-4. Wait for the AI-generated summary
+1. Navigate to any webpage (or YouTube video)
+2. Open the popup and tap the **📄 Summarize page** (or **🎬 Summarize video**) chip
+3. The summary streams in; for videos the transcript panel is opened automatically
 
-### Summarizing a YouTube Video
+### Chatting
 
-1. Navigate to a YouTube video
-2. Click the extension icon
-3. Click "Summarize Video"
-4. The extension will automatically open the transcript panel (if available)
-5. Wait for the AI-generated summary with key insights and takeaways
+- Type a question and press Enter (Shift+Enter for a new line)
+- The conversation — including the extracted page content — is kept for follow-up questions
+- Click **+** in the header to start a fresh chat; the old one stays in History
 
-### Chatting about Content
+### History
 
-1. After loading a page or video, click the extension icon
-2. Type your question in the chat input field
-3. Press Enter or click Send
-4. The AI will respond based on the page/video content
-5. Continue the conversation with follow-up questions
+- Click the **clock icon** to see all saved chats, grouped by date
+- Click a chat to reopen and continue it (works even from a different page — replies use the saved page content)
+- Hover a chat and click the trash icon twice to delete it, or use "Clear all"
 
-### Managing Conversations
+## Architecture
 
-- **Clear Chat**: Click "Clear Chat" to start a new conversation
-- **Conversation History**: The extension maintains context throughout your conversation about the current page
+```
+popup.html / popup.js / styles.css   UI only — renders state, streams deltas
+background.js                        Owns everything: extraction, OpenAI calls,
+                                     streaming, and conversation persistence
+```
 
-## Technical Details
+The background service worker is the source of truth. The popup asks it for the current page's conversation on open (`getState`) and renders it; generation events (`genStatus`, `genDelta`, `genDone`, `genError`) are broadcast so the popup can attach/detach freely — including reattaching to a generation already in progress.
 
-### Built With
+### Storage layout (`chrome.storage.local`)
 
-- **Manifest V3**: Latest Chrome extension architecture
-- **OpenAI API**: Currently configured to use `gpt-5-nano-2025-08-07` model
-- **JavaScript**: Vanilla JS for lightweight performance
-- **Chrome APIs**: Storage, Scripting, and Active Tab permissions
+| Key | Contents |
+|---|---|
+| `convIndex` | Lightweight index of all conversations (for the History list) |
+| `urlActive` | Map of normalized page URL → active conversation id |
+| `conv:<id>` | Full conversation: messages + extracted page content |
+| `drafts` | Unsent input text per page |
 
-### Content Extraction
+URLs are normalized (hash and `utm_*`/`fbclid`/`gclid` parameters stripped) so the same article maps to the same chat. History is capped at 100 conversations, pruned oldest-first.
 
-- **Web Pages**: Uses intelligent selectors to find main content areas (articles, main sections) with fallback to body content cleaning
-- **YouTube Videos**: Extracts transcript text from YouTube's native transcript panel
-- **Content Limits**: Truncates content to 15,000 characters to stay within API limits
+### API
 
-### API Configuration
-
-The extension is currently configured to use:
-- **Model**: `gpt-5-nano-2025-08-07`
-- **API Endpoint**: `https://api.openai.com/v1/chat/completions`
-- **Temperature**: 0.5 for balanced creativity and accuracy
+- **Model**: `gpt-5-nano-2025-08-07` by default; selectable in Settings
+- **Endpoint**: `https://api.openai.com/v1/chat/completions` with `stream: true` (falls back to non-streaming automatically if the account/model rejects streaming)
+- **Content limit**: extracted content truncated to 24,000 characters; the last 24 messages are sent per request
 
 ## Privacy & Security
 
-- Your OpenAI API key is stored locally in Chrome's sync storage
-- No data is collected or stored by the extension itself
-- All communication happens directly between your browser and OpenAI's API
+- Your OpenAI API key is stored in Chrome's sync storage
+- Conversations are stored **only on your device** in Chrome's local extension storage — nothing leaves your browser except the calls to OpenAI
 - Content extraction happens locally in your browser
+- Model responses are rendered through an HTML-escaping markdown renderer (no raw HTML injection)
 
 ## Permissions Explained
 
-- **activeTab**: Access the current tab's content for summarization
-- **storage**: Store your API key and conversation history
-- **scripting**: Inject content extraction scripts into web pages
-- **host_permissions (api.openai.com)**: Make API calls to OpenAI
+- **activeTab** — read the current tab's URL/title and content when you open the popup
+- **storage** — store your API key, settings, and conversation history
+- **scripting** — inject the content/transcript extraction functions into the page
+- **host_permissions (api.openai.com)** — make API calls to OpenAI
 
 ## Limitations
 
 - Requires an active OpenAI API key with sufficient credits
-- Content is truncated to 15,000 characters maximum
+- Extracted content is truncated to 24,000 characters
 - YouTube videos must have transcripts/captions available
-- Cannot access restricted pages (chrome://, chrome.google.com/webstore, etc.)
+- Cannot read restricted pages (`chrome://`, the Chrome Web Store, etc.) — but past chats remain accessible from History
 
 ## Troubleshooting
 
-### "OpenAI API Key not set in Settings"
-- Make sure you've entered a valid API key in the extension settings
-
-### "Could not extract YouTube transcript"
-- Ensure the video has captions/transcripts available
-- Try manually opening the transcript panel first
-- Some videos may not have transcripts available
-
-### "API Error: 401"
-- Your API key is invalid or expired
-- Check your API key in settings and update if necessary
-
-### "API Error: 429"
-- You've hit OpenAI's rate limit or quota
-- Check your OpenAI account usage and billing
+- **"OpenAI API key not set"** — add a valid key in Settings
+- **"Could not extract YouTube transcript"** — ensure the video has captions; try opening the transcript panel manually first
+- **"Invalid OpenAI API key" (401)** — the key is invalid or expired; update it in Settings
+- **"Rate limit or quota exceeded" (429)** — check your OpenAI account usage and billing
+- **Chat seems stale after the page changed** — hit Summarize again to re-extract, or start a new chat with **+**
 
 ## Contributing
 
@@ -146,8 +128,3 @@ This project is open source and available for personal and commercial use.
 ## Author
 
 **puscas-sergiu**
-
-## Acknowledgments
-
-- Built with OpenAI's powerful language models
-- YouTube transcript extraction leverages YouTube's native transcript feature
