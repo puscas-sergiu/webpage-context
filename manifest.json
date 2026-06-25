@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Webpage Summarizer & Chat",
-  "version": "2.0.0",
-  "description": "Chat with any webpage or YouTube video using OpenAI — summaries, Q&A, key points. Conversations saved locally per page, no account needed.",
+  "version": "2.1.0",
+  "description": "Chat with any webpage or YouTube video using OpenAI, and save pages to a searchable knowledge base with smart indexing. Stored locally, no account needed.",
   "permissions": [
-    "activeTab", "storage", "scripting"
+    "activeTab", "storage", "scripting", "unlimitedStorage"
   ],
   "host_permissions": [
     "https://api.openai.com/"

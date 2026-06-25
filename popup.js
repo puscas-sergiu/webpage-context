@@ -6,12 +6,28 @@ const els = {
     pageFavicon: document.getElementById('page-favicon'),
     pageTitle: document.getElementById('page-title'),
     newChatBtn: document.getElementById('new-chat-btn'),
+    bookmarkBtn: document.getElementById('bookmark-btn'),
+    navKb: document.getElementById('nav-kb'),
     navHistory: document.getElementById('nav-history'),
     navSettings: document.getElementById('nav-settings'),
     banner: document.getElementById('banner'),
     viewChat: document.getElementById('view-chat'),
     viewHistory: document.getElementById('view-history'),
+    viewKb: document.getElementById('view-kb'),
     viewSettings: document.getElementById('view-settings'),
+    kbTabBrowse: document.getElementById('kb-tab-browse'),
+    kbTabAsk: document.getElementById('kb-tab-ask'),
+    kbBrowse: document.getElementById('kb-browse'),
+    kbAsk: document.getElementById('kb-ask'),
+    kbSearch: document.getElementById('kb-search'),
+    kbSearchMode: document.getElementById('kb-search-mode'),
+    kbList: document.getElementById('kb-list'),
+    kbAnswer: document.getElementById('kb-answer'),
+    kbAskStatus: document.getElementById('kb-ask-status'),
+    kbQuestion: document.getElementById('kb-question'),
+    kbAskBtn: document.getElementById('kb-ask-btn'),
+    kbAskIcon: document.getElementById('kb-ask-icon'),
+    kbStopIcon: document.getElementById('kb-stop-icon'),
     chatMessages: document.getElementById('chat-messages'),
     statusBar: document.getElementById('status-bar'),
     chips: document.getElementById('chips'),
@@ -25,7 +41,8 @@ const els = {
     toggleKey: document.getElementById('toggle-key'),
     modelSelect: document.getElementById('model-select'),
     saveSettings: document.getElementById('save-settings'),
-    settingsStatus: document.getElementById('settings-status')
+    settingsStatus: document.getElementById('settings-status'),
+    kbEmbeddingsEnabled: document.getElementById('kb-embeddings-enabled')
 };
 
 const ICONS = {
@@ -43,6 +60,10 @@ let generating = false;
 let streamEl = null;   // element receiving the streamed response
 let streamText = '';
 let draftTimer = null;
+let bookmarked = false;     // is the current page saved in the KB
+let kbAskId = null;         // id of the in-flight "ask your KB" run
+let kbAskText = '';         // streamed answer buffer
+let kbSearchTimer = null;
 
 // =============== Utilities ===============
 
@@ -200,19 +221,25 @@ function renderMarkdown(text) {
 function showView(name) {
     els.viewChat.classList.toggle('active', name === 'chat');
     els.viewHistory.classList.toggle('active', name === 'history');
+    els.viewKb.classList.toggle('active', name === 'kb');
     els.viewSettings.classList.toggle('active', name === 'settings');
+    els.navKb.classList.toggle('active', name === 'kb');
     els.navHistory.classList.toggle('active', name === 'history');
     els.navSettings.classList.toggle('active', name === 'settings');
     if (name === 'history') renderHistory();
+    if (name === 'kb') renderKB();
     if (name === 'chat') els.userInput.focus();
 }
 
 function currentView() {
     if (els.viewHistory.classList.contains('active')) return 'history';
+    if (els.viewKb.classList.contains('active')) return 'kb';
     if (els.viewSettings.classList.contains('active')) return 'settings';
     return 'chat';
 }
 
+els.navKb.addEventListener('click', () =>
+    showView(currentView() === 'kb' ? 'chat' : 'kb'));
 els.navHistory.addEventListener('click', () =>
     showView(currentView() === 'history' ? 'chat' : 'history'));
 els.navSettings.addEventListener('click', () =>
@@ -667,6 +694,267 @@ function attachToFlight(state) {
     scrollToBottom(true);
 }
 
+// =============== Bookmarks / Knowledge Base ===============
+
+function setBookmarked(on) {
+    bookmarked = on;
+    els.bookmarkBtn.classList.toggle('active', on);
+    els.bookmarkBtn.title = on ? 'Saved — click to remove from Knowledge Base' : 'Save to Knowledge Base';
+}
+
+async function refreshBookmarkState() {
+    if (restricted) { els.bookmarkBtn.disabled = true; return; }
+    const response = await send({ type: 'isBookmarked', url: pageUrl });
+    setBookmarked(!!response?.bookmarked);
+}
+
+els.bookmarkBtn.addEventListener('click', async () => {
+    if (els.bookmarkBtn.disabled) return;
+    els.bookmarkBtn.disabled = true;
+    if (bookmarked) {
+        const state = await send({ type: 'isBookmarked', url: pageUrl });
+        if (state?.id) await send({ type: 'deleteBookmark', id: state.id });
+        setBookmarked(false);
+        showStatus('Removed from Knowledge Base.', 'info');
+    } else {
+        const response = await send({ type: 'saveBookmark', url: pageUrl, convId: conv?.id });
+        if (response?.ok) {
+            setBookmarked(true);
+            showStatus('Saved — indexing in the background…', 'info');
+        } else {
+            showStatus(response?.error || 'Could not save.', 'error');
+        }
+    }
+    els.bookmarkBtn.disabled = false;
+    setTimeout(() => { if (!generating) showStatus(''); }, 2000);
+});
+
+// --- Browse / Ask tabs ---
+function showKBTab(tab) {
+    const browse = tab === 'browse';
+    els.kbTabBrowse.classList.toggle('active', browse);
+    els.kbTabAsk.classList.toggle('active', !browse);
+    els.kbBrowse.hidden = !browse;
+    els.kbAsk.hidden = browse;
+    if (!browse) els.kbQuestion.focus();
+}
+els.kbTabBrowse.addEventListener('click', () => showKBTab('browse'));
+els.kbTabAsk.addEventListener('click', () => showKBTab('ask'));
+
+async function renderKB() {
+    const query = els.kbSearch.value.trim();
+    const response = query
+        ? await send({ type: 'searchKB', query, mode: els.kbSearchMode.value })
+        : await send({ type: 'getBookmarks' });
+    renderKBResults(response?.items || []);
+}
+
+function renderKBResults(items) {
+    els.kbList.innerHTML = '';
+    if (items.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'empty-state';
+        empty.innerHTML = els.kbSearch.value.trim()
+            ? '<div class="empty-icon">🔍</div><div class="empty-title">No matches</div><div class="empty-sub">Try different words or another search mode.</div>'
+            : '<div class="empty-icon">🔖</div><div class="empty-title">No saved pages yet</div><div class="empty-sub">Use the bookmark icon to save the current page.</div>';
+        els.kbList.appendChild(empty);
+        return;
+    }
+
+    for (const item of items) {
+        const row = document.createElement('div');
+        row.className = 'history-item';
+
+        const icon = document.createElement('div');
+        icon.className = 'history-icon';
+        if (item.favIconUrl && /^https?:/.test(item.favIconUrl)) {
+            const img = document.createElement('img');
+            img.src = item.favIconUrl;
+            img.alt = '';
+            icon.appendChild(img);
+        } else {
+            icon.textContent = item.contentType === 'video' ? '🎬' : '📄';
+        }
+
+        const main = document.createElement('div');
+        main.className = 'history-main';
+        const title = document.createElement('div');
+        title.className = 'history-title';
+        title.textContent = item.aiTitle || item.title || domainOf(item.url);
+        const meta = document.createElement('div');
+        meta.className = 'history-meta';
+        meta.textContent = `${domainOf(item.url)} · ${relTime(item.updatedAt)}`;
+        main.append(title, meta);
+
+        const snippet = item.snippet || item.summary;
+        if (snippet) {
+            const snip = document.createElement('div');
+            snip.className = 'kb-snippet';
+            snip.textContent = snippet;
+            main.appendChild(snip);
+        }
+        if (item.tags && item.tags.length) {
+            const tags = document.createElement('div');
+            tags.className = 'kb-tags';
+            for (const tag of item.tags.slice(0, 5)) {
+                const chip = document.createElement('span');
+                chip.className = 'kb-tag';
+                chip.textContent = tag;
+                tags.appendChild(chip);
+            }
+            main.appendChild(tags);
+        }
+
+        const del = document.createElement('button');
+        del.className = 'icon-btn history-delete';
+        del.title = 'Remove from Knowledge Base';
+        del.innerHTML = ICONS.trash;
+        del.addEventListener('click', async (event) => {
+            event.stopPropagation();
+            if (!del.classList.contains('armed')) {
+                del.classList.add('armed');
+                del.title = 'Click again to confirm';
+                setTimeout(() => { del.classList.remove('armed'); del.title = 'Remove from Knowledge Base'; }, 2000);
+                return;
+            }
+            await send({ type: 'deleteBookmark', id: item.id });
+            if (normalizeUrl(item.url) === pageUrl) setBookmarked(false);
+            renderKB();
+        });
+
+        row.append(icon, main, del);
+        row.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
+        els.kbList.appendChild(row);
+    }
+}
+
+els.kbSearch.addEventListener('input', () => {
+    clearTimeout(kbSearchTimer);
+    kbSearchTimer = setTimeout(renderKB, 250);
+});
+els.kbSearchMode.addEventListener('change', renderKB);
+
+// --- Ask your KB (RAG) ---
+function setKBAsking(on) {
+    els.kbAskIcon.hidden = on;
+    els.kbStopIcon.hidden = !on;
+    els.kbAskBtn.title = on ? 'Stop' : 'Ask';
+    if (!on) { els.kbAskStatus.hidden = true; }
+}
+
+function submitKBQuestion() {
+    const question = els.kbQuestion.value.trim();
+    if (!question || kbAskId) return;
+    els.kbQuestion.value = '';
+    autosizeKBQuestion();
+    askKB(question);
+}
+
+async function askKB(question) {
+    kbAskText = '';
+    els.kbAnswer.innerHTML = `<div class="message user">${escapeHtml(question)}</div>`
+        + '<div class="message assistant typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+    setKBAsking(true);
+    const response = await send({ type: 'askKB', question });
+    if (!response?.ok) {
+        setKBAsking(false);
+        els.kbAnswer.querySelector('.typing')?.remove();
+        showKBStatus(response?.error || 'Could not reach the background service.', 'error');
+        if (/API key/i.test(response?.error || '')) showView('settings');
+        return;
+    }
+    kbAskId = response.askId;
+}
+
+function showKBStatus(text, type = 'info') {
+    els.kbAskStatus.textContent = text;
+    els.kbAskStatus.className = `status-bar ${type}`;
+    els.kbAskStatus.hidden = !text;
+}
+
+function finishKBAnswer(content, sources, cancelled) {
+    els.kbAnswer.querySelector('.typing')?.remove();
+    setKBAsking(false);
+    kbAskId = null;
+    if (!content && cancelled) { showKBStatus('Stopped.', 'info'); return; }
+
+    let answerEl = els.kbAnswer.querySelector('.kb-answer-body');
+    if (!answerEl) {
+        answerEl = document.createElement('div');
+        answerEl.className = 'message assistant kb-answer-body';
+        els.kbAnswer.appendChild(answerEl);
+    }
+    answerEl.classList.remove('streaming');
+    answerEl.innerHTML = '<div class="md">' + renderMarkdown(content || '') + '</div>';
+
+    if (sources && sources.length) {
+        const list = document.createElement('div');
+        list.className = 'kb-sources';
+        list.innerHTML = '<div class="kb-sources-head">Sources</div>';
+        for (const source of sources) {
+            const link = document.createElement('a');
+            link.className = 'kb-source';
+            link.href = source.url;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            link.textContent = `[${source.n}] ${source.title}`;
+            list.appendChild(link);
+        }
+        els.kbAnswer.appendChild(list);
+    }
+}
+
+function ensureKBStreamEl() {
+    let el = els.kbAnswer.querySelector('.kb-answer-body');
+    if (el) return el;
+    els.kbAnswer.querySelector('.typing')?.remove();
+    el = document.createElement('div');
+    el.className = 'message assistant streaming kb-answer-body';
+    el.innerHTML = '<div class="md"></div>';
+    els.kbAnswer.appendChild(el);
+    return el;
+}
+
+// Listener for the "ask your KB" stream (reuses gen* messages keyed by askId).
+chrome.runtime.onMessage.addListener((msg) => {
+    if (!msg?.type?.startsWith('gen') || !kbAskId || msg.convId !== kbAskId) return;
+    switch (msg.type) {
+        case 'genStatus':
+            showKBStatus(msg.status, 'info');
+            break;
+        case 'genDelta':
+            showKBStatus('');
+            kbAskText += msg.delta;
+            ensureKBStreamEl().querySelector('.md').innerHTML = renderMarkdown(kbAskText);
+            break;
+        case 'genDone':
+            finishKBAnswer(msg.content, msg.sources, msg.cancelled);
+            break;
+        case 'genError':
+            els.kbAnswer.querySelector('.typing')?.remove();
+            setKBAsking(false);
+            kbAskId = null;
+            showKBStatus(msg.error || 'Something went wrong.', 'error');
+            break;
+    }
+});
+
+function autosizeKBQuestion() {
+    els.kbQuestion.style.height = 'auto';
+    els.kbQuestion.style.height = Math.min(els.kbQuestion.scrollHeight, 110) + 'px';
+}
+els.kbQuestion.addEventListener('input', autosizeKBQuestion);
+els.kbQuestion.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        submitKBQuestion();
+    }
+});
+els.kbAskBtn.addEventListener('click', () => {
+    if (kbAskId) { send({ type: 'stopAsk', askId: kbAskId }); return; }
+    submitKBQuestion();
+});
+
 // =============== Settings ===============
 
 els.toggleKey.addEventListener('click', () => {
@@ -679,7 +967,11 @@ els.saveSettings.addEventListener('click', async () => {
         showSettingsStatus('Please enter an API key.', 'error');
         return;
     }
-    await chrome.storage.sync.set({ openaiApiKey: apiKey, model: els.modelSelect.value });
+    await chrome.storage.sync.set({
+        openaiApiKey: apiKey,
+        model: els.modelSelect.value,
+        kbEmbeddingsEnabled: els.kbEmbeddingsEnabled.checked
+    });
     showSettingsStatus('Saved. Testing key…', 'info');
     els.saveSettings.disabled = true;
     const response = await send({ type: 'testApiKey' });
@@ -718,9 +1010,10 @@ async function init() {
         els.pageFavicon.hidden = false;
     }
 
-    const settings = await chrome.storage.sync.get(['openaiApiKey', 'model']);
+    const settings = await chrome.storage.sync.get(['openaiApiKey', 'model', 'kbEmbeddingsEnabled']);
     if (settings.openaiApiKey) els.apiKey.value = settings.openaiApiKey;
     if (settings.model) els.modelSelect.value = settings.model;
+    els.kbEmbeddingsEnabled.checked = settings.kbEmbeddingsEnabled !== false;
 
     const state = await send({ type: 'getState', url: pageUrl });
     conv = state?.conv || null;
@@ -740,6 +1033,8 @@ async function init() {
     }
 
     if (state) attachToFlight(state);
+
+    refreshBookmarkState();
 
     if (!settings.openaiApiKey) {
         showView('settings');

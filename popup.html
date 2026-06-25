@@ -15,6 +15,12 @@
             <button id="new-chat-btn" class="icon-btn" title="New chat (current chat is kept in History)">
                 <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
             </button>
+            <button id="bookmark-btn" class="icon-btn" title="Save to Knowledge Base">
+                <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+            </button>
+            <button id="nav-kb" class="icon-btn" title="Knowledge Base">
+                <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            </button>
             <button id="nav-history" class="icon-btn" title="History">
                 <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
             </button>
@@ -49,6 +55,43 @@
         <div id="history-list" class="history-list"></div>
     </section>
 
+    <!-- Knowledge Base view -->
+    <section id="view-kb" class="view">
+        <div class="view-head">
+            <h2>Knowledge Base</h2>
+            <div class="kb-tabs">
+                <button id="kb-tab-browse" class="text-btn active">Browse</button>
+                <button id="kb-tab-ask" class="text-btn">Ask</button>
+            </div>
+        </div>
+
+        <!-- Browse / search -->
+        <div id="kb-browse">
+            <div class="kb-search-row">
+                <input type="search" id="kb-search" placeholder="Search your saved pages…">
+                <select id="kb-search-mode" title="Search mode">
+                    <option value="hybrid">Hybrid</option>
+                    <option value="lexical">Keyword</option>
+                    <option value="semantic">Semantic</option>
+                </select>
+            </div>
+            <div id="kb-list" class="history-list"></div>
+        </div>
+
+        <!-- Ask your knowledge base (RAG) -->
+        <div id="kb-ask" hidden>
+            <div id="kb-answer" class="kb-answer"></div>
+            <div id="kb-ask-status" class="status-bar" hidden></div>
+            <div class="composer">
+                <textarea id="kb-question" rows="1" placeholder="Ask across everything you've saved…"></textarea>
+                <button id="kb-ask-btn" class="send-btn" title="Ask">
+                    <svg id="kb-ask-icon" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+                    <svg id="kb-stop-icon" viewBox="0 0 24 24" hidden><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                </button>
+            </div>
+        </div>
+    </section>
+
     <!-- Settings view -->
     <section id="view-settings" class="view">
         <div class="view-head">
@@ -70,7 +113,11 @@
         </select>
         <button id="save-settings" class="primary-btn">Save &amp; test</button>
         <div id="settings-status" class="status-line" hidden></div>
-        <p class="hint">Your key is stored in Chrome sync storage and only sent to api.openai.com. Conversations are saved locally on this device, per page — no account needed.</p>
+        <label class="checkbox-row">
+            <input type="checkbox" id="kb-embeddings-enabled" checked>
+            <span>Semantic search for Knowledge Base <small>(embeds saved pages via OpenAI for meaning-based search &amp; Ask; a small extra API cost per save)</small></span>
+        </label>
+        <p class="hint">Your key is stored in Chrome sync storage and only sent to api.openai.com. Conversations and saved pages are stored locally on this device — no account needed.</p>
     </section>
 
     <script src="popup.js"></script>
