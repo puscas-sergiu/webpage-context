@@ -939,6 +939,14 @@ chrome.runtime.onMessage.addListener((msg) => {
     }
 });
 
+// Background enrichment runs after a save completes; refresh the Browse list so
+// the AI title, tags and snippet appear without the user reopening the view.
+chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === 'kbEnrichDone' && currentView() === 'kb' && !els.kbBrowse.hidden) {
+        renderKB();
+    }
+});
+
 function autosizeKBQuestion() {
     els.kbQuestion.style.height = 'auto';
     els.kbQuestion.style.height = Math.min(els.kbQuestion.scrollHeight, 110) + 'px';

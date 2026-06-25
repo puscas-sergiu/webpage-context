@@ -375,6 +375,28 @@ async function callEmbeddings(apiKey, model, input, signal) {
     return Float32Array.from(vector);
 }
 
+// Search re-embeds the query on every debounced keystroke and on each search-mode
+// toggle. Cache recent query vectors (small LRU) so repeated/identical queries
+// don't trigger — or get billed for — another embeddings request.
+const queryEmbedCache = new Map(); // query -> Float32Array, insertion-ordered LRU
+const QUERY_EMBED_CACHE_MAX = 32;
+
+async function embedQuery(apiKey, query) {
+    const key = (query || '').trim();
+    const cached = queryEmbedCache.get(key);
+    if (cached) {
+        queryEmbedCache.delete(key);   // refresh recency
+        queryEmbedCache.set(key, cached);
+        return cached;
+    }
+    const vector = await callEmbeddings(apiKey, DEFAULT_EMBEDDING_MODEL, key);
+    queryEmbedCache.set(key, vector);
+    if (queryEmbedCache.size > QUERY_EMBED_CACHE_MAX) {
+        queryEmbedCache.delete(queryEmbedCache.keys().next().value); // evict oldest
+    }
+    return vector;
+}
+
 // =============== Generation pipeline ===============
 
 function makeUserMessage(mode, prompt) {
@@ -640,22 +662,32 @@ async function enrichBookmark(id) {
     const meta = await generateMetadata(apiKey, model, bookmark);
     Object.assign(bookmark, meta);
 
+    let vector = null;
     if (embeddingsEnabled) {
         try {
-            const input = `${bookmark.aiTitle || bookmark.title}\n${bookmark.summary}\n`
+            const input = `${bookmark.aiTitle || bookmark.title}\n${bookmark.summary || ''}\n`
                 + (bookmark.pageContent || '').slice(0, KB_EMBED_CHARS);
-            const vector = await callEmbeddings(apiKey, DEFAULT_EMBEDDING_MODEL, input);
-            await kbPutVector({ bookmarkId: id, model: DEFAULT_EMBEDDING_MODEL, dims: vector.length, vector });
+            vector = await callEmbeddings(apiKey, DEFAULT_EMBEDDING_MODEL, input);
         } catch (e) {
             console.warn('Embedding failed:', e);
         }
     }
 
-    bookmark.enriched = true;
-    bookmark.updatedAt = Date.now();
-    await kbPutBookmark(bookmark);
+    // Re-read before writing: the bookmark may have been deleted while we were
+    // waiting on the (slow) metadata/embedding calls. Don't resurrect it — and
+    // don't leave an orphan vector behind for a bookmark that's gone.
+    const current = await kbGetBookmark(id);
+    if (!current) return;
+
+    Object.assign(current, meta);
+    current.enriched = true;
+    current.updatedAt = Date.now();
+    await kbPutBookmark(current);
+    if (vector) {
+        await kbPutVector({ bookmarkId: id, model: DEFAULT_EMBEDDING_MODEL, dims: vector.length, vector });
+    }
     await kbIndexRemove(id);
-    await kbIndexAdd(id, termCounts(bookmark));
+    await kbIndexAdd(id, termCounts(current));
     broadcast({ type: 'kbEnrichDone', id });
 }
 
@@ -666,28 +698,30 @@ async function retrieveTopK(query, mode, k = KB_TOP_K) {
     const all = await kbAllBookmarks();
     const byId = new Map(all.map(b => [b.id, b]));
     const wantSemantic = (mode === 'semantic' || mode === 'hybrid') && embeddingsEnabled && apiKey;
-    const wantLexical = mode === 'lexical' || mode === 'hybrid' || !wantSemantic;
 
-    // Lexical component.
-    const lexical = new Map();
-    if (wantLexical) {
-        const hits = await kbIndexLookup(tokenize(query));
-        let max = 0;
-        for (const { score } of hits.values()) max = Math.max(max, score);
-        for (const [id, { score }] of hits) lexical.set(id, max ? score / max : 0);
-    }
-
-    // Semantic component.
+    // Semantic component (computed first so we know whether to fall back to lexical).
     const semantic = new Map();
     if (wantSemantic) {
         try {
-            const qVec = await callEmbeddings(apiKey, DEFAULT_EMBEDDING_MODEL, query);
+            const qVec = await embedQuery(apiKey, query);
             for (const row of await kbAllVectors()) {
                 semantic.set(row.bookmarkId, cosineSim(qVec, row.vector));
             }
         } catch (e) {
             console.warn('Semantic search failed, falling back to lexical:', e);
         }
+    }
+
+    // Lexical component. Always for lexical/hybrid; also as a fallback when a
+    // semantic search produced nothing (embeddings off, no vectors yet, or the
+    // embeddings API failed) so the user still gets keyword results.
+    const lexical = new Map();
+    const needLexical = mode !== 'semantic' || semantic.size === 0;
+    if (needLexical) {
+        const hits = await kbIndexLookup(tokenize(query));
+        let max = 0;
+        for (const { score } of hits.values()) max = Math.max(max, score);
+        for (const [id, { score }] of hits) lexical.set(id, max ? score / max : 0);
     }
 
     const ids = new Set([...lexical.keys(), ...semantic.keys()]);
@@ -698,7 +732,7 @@ async function retrieveTopK(query, mode, k = KB_TOP_K) {
         const lex = lexical.get(id) || 0;
         const sem = semantic.get(id) || 0;
         let score;
-        if (mode === 'semantic') score = sem;
+        if (mode === 'semantic') score = semantic.size ? sem : lex; // fall back to lexical
         else if (mode === 'lexical') score = lex;
         else score = semantic.size ? 0.5 * lex + 0.5 * sem : lex; // hybrid
         scored.push({ ...meta, score, snippet: snippetFrom(meta) });
