@@ -1,12 +1,13 @@
 # Webpage Summarizer & Chat
 
-A Chrome extension that lets you chat with any webpage or YouTube video using OpenAI — summaries, Q&A, key points. Conversations are saved locally per page, with a browsable history. No account needed.
+A Chrome extension that lets you chat with any webpage or YouTube video using OpenAI — summaries, Q&A, key points — and save pages into a searchable **knowledge base** with smart AI indexing. Everything is stored locally. No account needed.
 
 ## Features
 
 - **Webpage summarization** — extract and summarize the main content from any webpage
 - **YouTube video summarization** — automatically opens the transcript panel, extracts captions, and generates a summary with key learnings and takeaways
 - **Interactive chat** — ask follow-up questions about the page/video; the page content is extracted once and reused for the whole conversation
+- **Knowledge base** — save any page with one click. Each saved page is auto-enriched with an AI title, summary, topic tags, and keywords (*smart indexing*), then is findable later through **hybrid search** (keyword + meaning-based semantic search). The **Ask** tab answers questions across everything you've saved, with inline citations to the source pages (RAG)
 - **Per-page persistence** — chats are saved locally (in `chrome.storage.local`) and keyed to the page URL. Close the popup, click elsewhere, restart the browser — reopen the popup on the same page and your conversation is right where you left it
 - **Chat history** — browse, reopen, continue, or delete past conversations from any page. Continuing an old chat reuses that page's saved content, even if you're no longer on the page
 - **Streaming responses** — answers render token-by-token; if the popup closes mid-response, the background finishes the generation and saves it
@@ -61,12 +62,22 @@ A Chrome extension that lets you chat with any webpage or YouTube video using Op
 - Click a chat to reopen and continue it (works even from a different page — replies use the saved page content)
 - Hover a chat and click the trash icon twice to delete it, or use "Clear all"
 
+### Knowledge Base
+
+- Click the **bookmark icon** in the header to save the current page (or video). The icon fills in once saved; click again to remove it. Saving extracts the page content immediately, then enriches it in the background with an AI title, summary, tags, and a semantic embedding
+- Click the **book icon** to open the Knowledge Base:
+  - **Browse** — search your saved pages. Choose **Hybrid** (default — blends keyword and meaning), **Keyword** (instant, offline, exact terms), or **Semantic** (meaning-based, finds synonyms). Click a result to open the page; delete with the trash icon (twice to confirm)
+  - **Ask** — ask a question across everything you've saved. The most relevant pages are retrieved and the model answers with inline `[1]`, `[2]` citations linking back to the sources
+- Semantic search and Ask use OpenAI embeddings (`text-embedding-3-small`), which add a small API cost per saved page. Turn this off in Settings to keep the knowledge base keyword-only and free
+
 ## Architecture
 
 ```
 popup.html / popup.js / styles.css   UI only — renders state, streams deltas
 background.js                        Owns everything: extraction, OpenAI calls,
-                                     streaming, and conversation persistence
+                                     streaming, conversation + knowledge-base logic
+kb-db.js                             IndexedDB wrapper for the knowledge base
+                                     (bookmarks, embedding vectors, lexical index)
 ```
 
 The background service worker is the source of truth. The popup asks it for the current page's conversation on open (`getState`) and renders it; generation events (`genStatus`, `genDelta`, `genDone`, `genError`) are broadcast so the popup can attach/detach freely — including reattaching to a generation already in progress.
@@ -81,6 +92,18 @@ The background service worker is the source of truth. The popup asks it for the 
 | `drafts` | Unsent input text per page |
 
 URLs are normalized (hash and `utm_*`/`fbclid`/`gclid` parameters stripped) so the same article maps to the same chat. History is capped at 100 conversations, pruned oldest-first.
+
+### Knowledge base storage (IndexedDB)
+
+The knowledge base lives in its own IndexedDB database (`webpageKB`), separate from chat conversations, because embedding vectors and extracted page text are too large for `chrome.storage.local`'s ~10MB cap (hence the `unlimitedStorage` permission). Three object stores:
+
+| Store | Contents |
+|---|---|
+| `bookmarks` | Saved page: url, title, AI title/summary/tags/keywords, extracted content, indexed by normalized URL (dedupe on re-save) |
+| `vectors` | One embedding per bookmark, stored as a `Float32Array` |
+| `invIndex` | Inverted index (term → postings) powering instant keyword search |
+
+Search blends a normalized lexical score with cosine similarity over the embeddings; **Ask** retrieves the top matches and feeds them to the chat model as cited context.
 
 ### API
 
@@ -99,8 +122,9 @@ URLs are normalized (hash and `utm_*`/`fbclid`/`gclid` parameters stripped) so t
 
 - **activeTab** — read the current tab's URL/title and content when you open the popup
 - **storage** — store your API key, settings, and conversation history
+- **unlimitedStorage** — give the knowledge base (IndexedDB) room for saved pages and embeddings beyond the default quota
 - **scripting** — inject the content/transcript extraction functions into the page
-- **host_permissions (api.openai.com)** — make API calls to OpenAI
+- **host_permissions (api.openai.com)** — make API calls to OpenAI (chat completions and embeddings)
 
 ## Limitations
 

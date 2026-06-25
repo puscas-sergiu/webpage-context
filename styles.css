@@ -527,6 +527,97 @@ input:focus, select:focus { outline: none; border-color: var(--accent); }
     margin-top: 14px;
 }
 
+/* ---------- Knowledge Base ---------- */
+
+#bookmark-btn.active svg { fill: currentColor; }
+
+.kb-tabs { display: flex; gap: 4px; }
+.kb-tabs .text-btn.active { background: var(--accent-soft); color: var(--accent); }
+
+.kb-search-row {
+    display: flex;
+    gap: 6px;
+    padding: 8px 12px;
+}
+#kb-search {
+    flex: 1;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+}
+#kb-search:focus { outline: none; border-color: var(--accent); }
+#kb-search-mode {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    padding: 0 6px;
+}
+
+.kb-snippet {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 3px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.kb-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.kb-tag {
+    font-size: 10.5px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+}
+
+/* Ask your KB */
+#kb-ask { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.kb-answer {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.kb-sources {
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.kb-sources-head {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--text-muted);
+}
+.kb-source {
+    font-size: 12px;
+    color: var(--accent);
+    text-decoration: none;
+}
+.kb-source:hover { text-decoration: underline; }
+
+/* Settings checkbox */
+.checkbox-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin-top: 14px;
+    font-size: 12.5px;
+    cursor: pointer;
+}
+.checkbox-row input { margin-top: 2px; }
+.checkbox-row small { color: var(--text-muted); display: block; margin-top: 2px; }
+
 /* ---------- Scrollbars ---------- */
 
 ::-webkit-scrollbar { width: 8px; }
