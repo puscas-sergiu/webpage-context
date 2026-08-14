@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Webpage Summarizer & Chat",
   "short_name": "Page Chat",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Summarize and chat with any page or YouTube video, then save it to a private, searchable knowledge base. Bring your own key.",
   "homepage_url": "https://github.com/puscas-sergiu/webpage-context",
   "minimum_chrome_version": "116",

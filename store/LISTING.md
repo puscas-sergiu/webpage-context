@@ -37,8 +37,9 @@ WHAT IT DOES
 • Summarize any page — one click turns an article, doc or paper into a structured
   summary with key points.
 
-• Summarize YouTube videos — the transcript panel is opened and read automatically,
-  then condensed into key learnings and takeaways.
+• Summarize YouTube videos — the transcript is read straight from YouTube's caption
+  data, then condensed into key learnings and takeaways. Works on watch pages, Shorts,
+  live replays and youtu.be links.
 
 • Keep asking — follow-up questions reuse the page content already extracted, so the
   conversation stays in context without re-reading the page.
@@ -105,9 +106,10 @@ extension popup and requests an action; the extension never reads tabs in the ba
 `scripting`
 ```
 Used to inject the text-extraction routine into the current page so its readable content
-can be collected for summarization. On YouTube it also opens the transcript panel and
-reads the caption text. No script is injected until the user requests a summary, asks a
-question, or saves the page.
+can be collected for summarization. On YouTube the routine requests the video's caption
+track from youtube.com and, failing that, opens the transcript panel and reads it. No
+script is injected until the user requests a summary, asks a question, or saves the
+page.
 ```
 
 `storage`

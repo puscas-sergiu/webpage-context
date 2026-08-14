@@ -120,7 +120,7 @@
 <h2>Permissions and why they are needed</h2>
 <ul>
   <li><code>activeTab</code> — read the title, URL and text of the tab you are currently looking at, and only after you open the extension.</li>
-  <li><code>scripting</code> — run the text-extraction routine inside that page (and, on YouTube, open the transcript panel) so its content can be summarized.</li>
+  <li><code>scripting</code> — run the text-extraction routine inside that page so its content can be summarized. On YouTube the routine asks YouTube itself for the video's caption track — a request to youtube.com made by the page you are already on, carrying nothing the page did not already have — and falls back to opening and reading the transcript panel.</li>
   <li><code>storage</code> — keep your API key, settings and conversations.</li>
   <li><code>unlimitedStorage</code> — let the Knowledge Base grow past the default quota, since saved page text and embeddings are large.</li>
   <li><code>https://api.openai.com/*</code> — send the requests described above.</li>

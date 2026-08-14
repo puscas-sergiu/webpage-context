@@ -9,7 +9,7 @@ A Chrome extension that lets you chat with any webpage or YouTube video using Op
 ## Features
 
 - **Webpage summarization** — extract and summarize the main content from any webpage
-- **YouTube video summarization** — automatically opens the transcript panel, extracts captions, and generates a summary with key learnings and takeaways
+- **YouTube video summarization** — pulls the transcript straight from YouTube's own caption data (with the transcript panel as a fallback), keeps `[m:ss]` timestamps so answers can cite moments, and generates a summary with key learnings and takeaways. Works on watch pages, Shorts, live replays and `youtu.be` links
 - **Interactive chat** — ask follow-up questions about the page/video; the page content is extracted once and reused for the whole conversation
 - **Knowledge base** — save any page with one click. Each saved page is auto-enriched with an AI title, summary, topic tags, and keywords (*smart indexing*), then is findable later through **hybrid search** (keyword + meaning-based semantic search). The **Ask** tab answers questions across everything you've saved, with inline citations to the source pages (RAG)
 - **Per-page persistence** — chats are saved locally (in `chrome.storage.local`) and keyed to the page URL. Close the popup, click elsewhere, restart the browser — reopen the popup on the same page and your conversation is right where you left it
@@ -54,7 +54,7 @@ A Chrome extension that lets you chat with any webpage or YouTube video using Op
 
 1. Navigate to any webpage (or YouTube video)
 2. Open the popup and tap the **📄 Summarize page** (or **🎬 Summarize video**) chip
-3. The summary streams in; for videos the transcript panel is opened automatically
+3. The summary streams in; for videos the transcript is fetched from YouTube's caption data, falling back to opening the transcript panel
 
 ### Chatting
 
@@ -90,12 +90,21 @@ need Node 22+ and a Chrome/Chromium binary (set `CHROME=/path/to/chrome` if it i
 found automatically).
 
 ```bash
+npm install && npm test              # unit tests (jsdom, the only dependency)
 bash tools/build.sh                  # dist/webpage-summarizer-chat-<version>.zip
 node tools/verify.mjs                # static wiring checks (runs inside build.sh)
 node tools/smoke.mjs                 # loads the extension in Chrome, end to end
 node tools/make-store-assets.mjs     # store/screenshots + promo tiles
 bash tools/make-icons.sh             # icon16/32/48/128.png from tools/*.svg
 ```
+
+`npm test` covers the extraction logic, which is the part most exposed to other
+people's markup: `test/transcript.test.js` runs the YouTube extractor against saved
+panel markup and mocked caption responses, and `test/context.test.js` covers how the
+background worker decides what to extract and when to re-extract it. YouTube reshapes
+its transcript panel regularly — when it does, save the new markup into
+`test/fixtures/` and add a case, and the suite will show which selectors stopped
+matching.
 
 `tools/build.sh` packages only the ten files the extension actually loads, and fails if
 anything referenced by `manifest.json`, `popup.html` or `importScripts()` is missing.
@@ -180,14 +189,14 @@ broad host permissions, and no content scripts running on page load.
 ## Limitations
 
 - Requires an active OpenAI API key with sufficient credits
-- Extracted content is truncated to 24,000 characters
-- YouTube videos must have transcripts/captions available
+- Extracted content is truncated to 24,000 characters (long transcripts keep the opening and the ending, with the middle elided)
+- YouTube videos must have captions available; without them the extension falls back to the video description and says so
 - Cannot read restricted pages (`chrome://`, the Chrome Web Store, etc.) — but past chats remain accessible from History
 
 ## Troubleshooting
 
 - **"OpenAI API key not set"** — add a valid key in Settings
-- **"Could not extract YouTube transcript"** — ensure the video has captions; try opening the transcript panel manually first
+- **"The transcript could not be read from this video"** — the video has no captions, or the page had not finished loading; reload the video and hit Summarize again
 - **"Invalid OpenAI API key" (401)** — the key is invalid or expired; update it in Settings
 - **"Rate limit or quota exceeded" (429)** — check your OpenAI account usage and billing
 - **Chat seems stale after the page changed** — hit Summarize again to re-extract, or start a new chat with **+**

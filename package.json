@@ -1,0 +1,12 @@
+{
+  "name": "webpage-summarizer-chat",
+  "version": "2.2.0",
+  "private": true,
+  "description": "Tooling for the Webpage Summarizer & Chat Chrome extension. The extension itself ships as plain files — this manifest only exists to run the tests.",
+  "scripts": {
+    "test": "node test/transcript.test.js && node test/context.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.0.0"
+  }
+}

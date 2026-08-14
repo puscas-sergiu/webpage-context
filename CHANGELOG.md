@@ -3,6 +3,39 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] — 2026-08-14
+
+### Fixed
+- **YouTube transcripts were extracted only some of the time.** Extraction scraped a
+  single selector (`ytd-transcript-segment-renderer`) that YouTube has replaced for many
+  users with the modern transcript view (`transcript-segment-view-model`). Both layouts
+  are live at once, so success depended on which rollout a user was in. The transcript
+  now comes from YouTube's own caption data — the `timedtext` endpoint resolved from the
+  player response, validated against the video id in the URL so in-page navigation
+  cannot return the previous video's captions — with the panel kept as a fallback that
+  understands both layouts, opens via the description's transcript section rather than an
+  English `aria-label`, and waits for segments to settle instead of a fixed delay.
+- **Chat on a video summarized the page instead of the transcript.** Only the *Summarize
+  video* action requested a transcript, so *Key takeaways* and typed questions were
+  answered from YouTube's navigation chrome. What to extract is now decided by the tab
+  URL, and content captured by the wrong extractor is refreshed.
+- **Only `youtube.com/watch` counted as a video.** Shorts, live replays, `youtu.be`,
+  embeds and the `m.`/`music.` hosts are recognised too, and every form of a video link
+  normalizes to one canonical URL, so a resume timestamp or a share link no longer opens
+  its own conversation.
+- A failed re-extraction no longer discards content that was extracted successfully
+  earlier, and a failing extraction is retried once rather than on every message.
+- Truncating a long transcript no longer drops the ending, where the conclusion usually
+  is; the opening and the ending are kept with the middle elided.
+
+### Added
+- Transcripts carry `[m:ss]` markers so answers can cite moments in the video. The
+  markers are stripped before lexical indexing, embeddings and snippets.
+- Videos without captions fall back to the video description, and the model is told that
+  is what it is working from instead of inferring a summary from the title.
+- Unit tests (`npm test`, jsdom): the extractor against saved panel markup and mocked
+  caption responses, plus the rules governing what gets extracted and when.
+
 ## [2.2.0] — 2026-08-14
 
 First release prepared for the Chrome Web Store.

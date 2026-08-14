@@ -67,8 +67,11 @@ this data.
 
 - **`activeTab`** — read the title, URL and text of the tab you are currently looking at,
   and only after you open the extension.
-- **`scripting`** — run the text-extraction routine inside that page (and, on YouTube,
-  open the transcript panel) so its content can be summarized.
+- **`scripting`** — run the text-extraction routine inside that page so its content can
+  be summarized. On YouTube the routine asks YouTube itself for the video's caption
+  track — a request to youtube.com made by the page you are already on, carrying nothing
+  the page did not already have — and falls back to opening and reading the transcript
+  panel.
 - **`storage`** — keep your API key, settings and conversations.
 - **`unlimitedStorage`** — let the Knowledge Base grow past the default quota, since
   saved page text and embeddings are large.

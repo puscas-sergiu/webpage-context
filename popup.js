@@ -71,6 +71,22 @@ let kbSearchTimer = null;
 
 // =============== Utilities ===============
 
+// Watch pages, Shorts, live streams, youtu.be links and embeds all carry a
+// transcript. Must stay in sync with the copy in background.js.
+function youtubeVideoId(url) {
+    try {
+        const u = new URL(url);
+        const host = u.hostname.replace(/^www\./, '');
+        if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || '';
+        if (!/(^|\.)youtube(-nocookie)?\.com$/.test(host)) return '';
+        if (u.pathname === '/watch') return u.searchParams.get('v') || '';
+        const match = u.pathname.match(/^\/(?:shorts|live|embed|v)\/([^/?#]+)/);
+        return match ? match[1] : '';
+    } catch {
+        return '';
+    }
+}
+
 function normalizeUrl(raw) {
     try {
         const u = new URL(raw);
@@ -80,6 +96,11 @@ function normalizeUrl(raw) {
                 u.searchParams.delete(key);
             }
         }
+        // Collapse every form of a YouTube video link (youtu.be, /shorts, a
+        // resume timestamp, playlist and referrer params) onto one canonical
+        // URL, so a video always maps to a single conversation.
+        const videoId = youtubeVideoId(u.toString());
+        if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
         return u.toString();
     } catch {
         return raw || '';
@@ -1144,7 +1165,7 @@ async function init() {
 
     const rawUrl = tab?.url || '';
     pageUrl = normalizeUrl(rawUrl);
-    isYouTube = rawUrl.includes('youtube.com/watch');
+    isYouTube = !!youtubeVideoId(rawUrl);
     restricted = isRestrictedUrl(rawUrl);
 
     els.pageTitle.textContent = tab?.title || domainOf(rawUrl) || 'This page';
