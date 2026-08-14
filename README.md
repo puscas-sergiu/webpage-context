@@ -2,6 +2,10 @@
 
 A Chrome extension that lets you chat with any webpage or YouTube video using OpenAI — summaries, Q&A, key points — and save pages into a searchable **knowledge base** with smart AI indexing. Everything is stored locally. No account needed.
 
+<p align="center">
+  <img src="store/screenshots/01-chat.png" alt="Summarizing a page in the extension popup" width="640">
+</p>
+
 ## Features
 
 - **Webpage summarization** — extract and summarize the main content from any webpage
@@ -16,6 +20,8 @@ A Chrome extension that lets you chat with any webpage or YouTube video using Op
 - **Quick actions** — one-tap chips for "Summarize", "Key points", and "Explain simply"
 - **Dark mode** — follows your system theme
 - **Keyboard shortcut** — `Alt+Shift+S` opens the popup (configurable at `chrome://extensions/shortcuts`)
+- **Accessible** — every control is reachable and operable from the keyboard, with labelled buttons, polite status announcements and visible focus rings
+- **Your data, in your hands** — export everything to JSON or erase all of it from Settings
 
 ## Installation
 
@@ -70,6 +76,54 @@ A Chrome extension that lets you chat with any webpage or YouTube video using Op
   - **Ask** — ask a question across everything you've saved. The most relevant pages are retrieved and the model answers with inline `[1]`, `[2]` citations linking back to the sources
 - Semantic search and Ask use OpenAI embeddings (`text-embedding-3-small`), which add a small API cost per saved page. Turn this off in Settings to keep the knowledge base keyword-only and free
 
+### Managing your data
+
+Open **Settings → Your data** to see how much is stored, export everything to a JSON file
+(your API key is excluded), or delete all conversations, drafts, saved pages, embeddings
+and the search index in one go. Uninstalling the extension removes everything too.
+
+## Building and publishing
+
+The extension has no build step for development — "Load unpacked" runs the source
+directly. The scripts in `tools/` exist to produce the Chrome Web Store artefacts, and
+need Node 22+ and a Chrome/Chromium binary (set `CHROME=/path/to/chrome` if it is not
+found automatically).
+
+```bash
+npm install && npm test              # unit tests (jsdom, the only dependency)
+bash tools/build.sh                  # dist/webpage-summarizer-chat-<version>.zip
+node tools/verify.mjs                # static wiring checks (runs inside build.sh)
+node tools/smoke.mjs                 # loads the extension in Chrome, end to end
+node tools/make-store-assets.mjs     # store/screenshots + promo tiles
+bash tools/make-icons.sh             # icon16/32/48/128.png from tools/*.svg
+```
+
+`npm test` covers the extraction logic, which is the part most exposed to other
+people's markup: `test/transcript.test.js` runs the YouTube extractor against saved
+panel markup and mocked caption responses, and `test/context.test.js` covers how the
+background worker decides what to extract and when to re-extract it. YouTube reshapes
+its transcript panel regularly — when it does, save the new markup into
+`test/fixtures/` and add a case, and the suite will show which selectors stopped
+matching.
+
+`tools/build.sh` packages only the ten files the extension actually loads, and fails if
+anything referenced by `manifest.json`, `popup.html` or `importScripts()` is missing.
+
+`tools/verify.mjs` reads the source for wiring mistakes a syntax check misses — a
+`getElementById` with no matching element, a message type the background never handles,
+a store string over its character limit. `tools/smoke.mjs` goes further and loads the
+unpacked extension in headless Chrome, then round-trips real messages through the
+service worker to exercise registration, IndexedDB and `chrome.storage`. Neither needs
+an API key.
+
+The store screenshots are real renders, not mockups: `tools/make-store-assets.mjs` runs
+the actual popup against `tools/preview/mock.js`, a stub of the `chrome.*` APIs, then
+frames the result. Change the UI and the screenshots regenerate to match.
+
+Submission copy — description, single purpose statement, per-permission justifications,
+data-usage declarations and an upload checklist — lives in
+[`store/LISTING.md`](store/LISTING.md).
+
 ## Architecture
 
 ```
@@ -113,10 +167,13 @@ Search blends a normalized lexical score with cosine similarity over the embeddi
 
 ## Privacy & Security
 
-- Your OpenAI API key is stored in Chrome's sync storage
-- Conversations are stored **only on your device** in Chrome's local extension storage — nothing leaves your browser except the calls to OpenAI
-- Content extraction happens locally in your browser
+- No backend, no account, no analytics, no tracking. The only host the extension contacts is `api.openai.com`
+- Your OpenAI API key is stored in Chrome's sync storage, so it follows your signed-in Chrome profile between devices — turn off extension syncing in Chrome if you would rather it stayed on one machine
+- Conversations and saved pages are stored **only on your device**; they are never synced
+- Content extraction happens locally, and only for the tab you are viewing, after you open the popup
 - Model responses are rendered through an HTML-escaping markdown renderer (no raw HTML injection)
+
+The full policy is in [PRIVACY.md](PRIVACY.md).
 
 ## Permissions Explained
 
@@ -124,7 +181,10 @@ Search blends a normalized lexical score with cosine similarity over the embeddi
 - **storage** — store your API key, settings, and conversation history
 - **unlimitedStorage** — give the knowledge base (IndexedDB) room for saved pages and embeddings beyond the default quota
 - **scripting** — inject the content/transcript extraction functions into the page
-- **host_permissions (api.openai.com)** — make API calls to OpenAI (chat completions and embeddings)
+- **host_permissions (`https://api.openai.com/*`)** — make API calls to OpenAI (chat completions and embeddings)
+
+Notably absent: no `tabs` permission (`activeTab` covers the one tab you are on), no
+broad host permissions, and no content scripts running on page load.
 
 ## Limitations
 
@@ -141,31 +201,21 @@ Search blends a normalized lexical score with cosine similarity over the embeddi
 - **"Rate limit or quota exceeded" (429)** — check your OpenAI account usage and billing
 - **Chat seems stale after the page changed** — hit Summarize again to re-extract, or start a new chat with **+**
 
-## Development
-
-The extension ships as plain files — no build step. `package.json` exists only
-to run the tests:
-
-```bash
-npm install   # jsdom, the only dev dependency
-npm test
-```
-
-`test/transcript.test.js` runs the YouTube extractor against saved markup and
-mocked caption responses; `test/context.test.js` covers how the background
-worker decides what to extract and when to re-extract.
-
-YouTube reshapes its transcript panel regularly. When it does, save the new
-panel markup into `test/fixtures/` and add a case — the suite will show exactly
-which selectors stopped matching.
-
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
 
+Changes to `popup.html`, `popup.js` or `styles.css` should be followed by
+`node tools/make-store-assets.mjs` so the screenshots in `store/` and the README stay in
+step with the UI.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
-This project is open source and available for personal and commercial use.
+[MIT](LICENSE).
 
 ## Author
 

@@ -2,52 +2,52 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Webpage Summarizer & Chat</title>
+    <title>Webpage Summarizer &amp; Chat</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
     <header class="app-header">
-        <div id="page-info" class="page-info" title="Back to chat">
+        <button id="page-info" class="page-info" title="Back to chat" aria-label="Back to chat">
             <img id="page-favicon" class="page-favicon" alt="" hidden>
             <span id="page-title" class="page-title">Loading…</span>
-        </div>
+        </button>
         <div class="header-actions">
-            <button id="new-chat-btn" class="icon-btn" title="New chat (current chat is kept in History)">
-                <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+            <button id="new-chat-btn" class="icon-btn" title="New chat (current chat is kept in History)" aria-label="Start a new chat">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
             </button>
-            <button id="bookmark-btn" class="icon-btn" title="Save to Knowledge Base">
-                <svg viewBox="0 0 24 24"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+            <button id="bookmark-btn" class="icon-btn" title="Save to Knowledge Base" aria-label="Save to Knowledge Base" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
             </button>
-            <button id="nav-kb" class="icon-btn" title="Knowledge Base">
-                <svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+            <button id="nav-kb" class="icon-btn" title="Knowledge Base" aria-label="Knowledge Base" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
             </button>
-            <button id="nav-history" class="icon-btn" title="History">
-                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+            <button id="nav-history" class="icon-btn" title="History" aria-label="History" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
             </button>
-            <button id="nav-settings" class="icon-btn" title="Settings">
-                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09A1.7 1.7 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09A1.7 1.7 0 0 0 20.91 10H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>
+            <button id="nav-settings" class="icon-btn" title="Settings" aria-label="Settings" aria-pressed="false">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1.11-1.56 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.56-1.11 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.09A1.7 1.7 0 0 0 10 3.09V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1.03 1.56 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.09A1.7 1.7 0 0 0 20.91 10H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.51 1z"/></svg>
             </button>
         </div>
     </header>
 
-    <div id="banner" class="banner" hidden></div>
+    <div id="banner" class="banner" role="status" hidden></div>
 
     <!-- Chat view -->
-    <section id="view-chat" class="view active">
-        <div id="chat-messages" class="chat-messages"></div>
-        <div id="status-bar" class="status-bar" hidden></div>
+    <section id="view-chat" class="view active" aria-label="Chat">
+        <div id="chat-messages" class="chat-messages" role="log" aria-live="polite" aria-label="Conversation"></div>
+        <div id="status-bar" class="status-bar" role="status" hidden></div>
         <div id="chips" class="chips"></div>
         <div class="composer">
-            <textarea id="user-input" rows="1" placeholder="Ask about this page…"></textarea>
-            <button id="send-btn" class="send-btn" title="Send">
-                <svg id="send-icon" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
-                <svg id="stop-icon" viewBox="0 0 24 24" hidden><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+            <textarea id="user-input" rows="1" placeholder="Ask about this page…" aria-label="Message"></textarea>
+            <button id="send-btn" class="send-btn" title="Send" aria-label="Send message">
+                <svg id="send-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+                <svg id="stop-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
             </button>
         </div>
     </section>
 
     <!-- History view -->
-    <section id="view-history" class="view">
+    <section id="view-history" class="view" aria-label="History">
         <div class="view-head">
             <h2>History</h2>
             <button id="clear-history-btn" class="text-btn danger">Clear all</button>
@@ -56,20 +56,20 @@
     </section>
 
     <!-- Knowledge Base view -->
-    <section id="view-kb" class="view">
+    <section id="view-kb" class="view" aria-label="Knowledge Base">
         <div class="view-head">
             <h2>Knowledge Base</h2>
             <div class="kb-tabs">
-                <button id="kb-tab-browse" class="text-btn active">Browse</button>
-                <button id="kb-tab-ask" class="text-btn">Ask</button>
+                <button id="kb-tab-browse" class="text-btn active" aria-pressed="true">Browse</button>
+                <button id="kb-tab-ask" class="text-btn" aria-pressed="false">Ask</button>
             </div>
         </div>
 
         <!-- Browse / search -->
         <div id="kb-browse">
             <div class="kb-search-row">
-                <input type="search" id="kb-search" placeholder="Search your saved pages…">
-                <select id="kb-search-mode" title="Search mode">
+                <input type="search" id="kb-search" placeholder="Search your saved pages…" aria-label="Search saved pages">
+                <select id="kb-search-mode" title="Search mode" aria-label="Search mode">
                     <option value="hybrid">Hybrid</option>
                     <option value="lexical">Keyword</option>
                     <option value="semantic">Semantic</option>
@@ -80,44 +80,77 @@
 
         <!-- Ask your knowledge base (RAG) -->
         <div id="kb-ask" hidden>
-            <div id="kb-answer" class="kb-answer"></div>
-            <div id="kb-ask-status" class="status-bar" hidden></div>
+            <div id="kb-answer" class="kb-answer" role="log" aria-live="polite"></div>
+            <div id="kb-ask-status" class="status-bar" role="status" hidden></div>
             <div class="composer">
-                <textarea id="kb-question" rows="1" placeholder="Ask across everything you've saved…"></textarea>
-                <button id="kb-ask-btn" class="send-btn" title="Ask">
-                    <svg id="kb-ask-icon" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
-                    <svg id="kb-stop-icon" viewBox="0 0 24 24" hidden><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+                <textarea id="kb-question" rows="1" placeholder="Ask across everything you've saved…" aria-label="Question for your knowledge base"></textarea>
+                <button id="kb-ask-btn" class="send-btn" title="Ask" aria-label="Ask your knowledge base">
+                    <svg id="kb-ask-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+                    <svg id="kb-stop-icon" viewBox="0 0 24 24" aria-hidden="true" hidden><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
                 </button>
             </div>
         </div>
     </section>
 
     <!-- Settings view -->
-    <section id="view-settings" class="view">
+    <section id="view-settings" class="view" aria-label="Settings">
         <div class="view-head">
             <h2>Settings</h2>
         </div>
-        <label class="field-label" for="api-key">OpenAI API key</label>
-        <div class="key-row">
-            <input type="password" id="api-key" placeholder="sk-…" autocomplete="off">
-            <button id="toggle-key" class="icon-btn" title="Show / hide key">
-                <svg viewBox="0 0 24 24"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
-            </button>
+
+        <div class="settings-group">
+            <h3 class="group-title">OpenAI</h3>
+
+            <label class="field-label" for="api-key">API key</label>
+            <div class="key-row">
+                <input type="password" id="api-key" placeholder="sk-…" autocomplete="off" spellcheck="false">
+                <button id="toggle-key" class="icon-btn" title="Show key" aria-label="Show API key" aria-pressed="false">
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+            </div>
+            <p class="field-hint">
+                Create a key at <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer">platform.openai.com</a>.
+                Usage is billed to your own OpenAI account.
+            </p>
+
+            <label class="field-label" for="model-select">Model</label>
+            <select id="model-select">
+                <option value="gpt-5-nano-2025-08-07">gpt-5-nano — fast &amp; cheap (default)</option>
+                <option value="gpt-5-mini-2025-08-07">gpt-5-mini — smarter</option>
+                <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                <option value="gpt-4o-mini">gpt-4o-mini</option>
+            </select>
+
+            <button id="save-settings" class="primary-btn">Save &amp; test</button>
+            <div id="settings-status" class="status-line" role="status" hidden></div>
         </div>
-        <label class="field-label" for="model-select">Model</label>
-        <select id="model-select">
-            <option value="gpt-5-nano-2025-08-07">gpt-5-nano — fast &amp; cheap (default)</option>
-            <option value="gpt-5-mini-2025-08-07">gpt-5-mini — smarter</option>
-            <option value="gpt-4.1-mini">gpt-4.1-mini</option>
-            <option value="gpt-4o-mini">gpt-4o-mini</option>
-        </select>
-        <button id="save-settings" class="primary-btn">Save &amp; test</button>
-        <div id="settings-status" class="status-line" hidden></div>
-        <label class="checkbox-row">
-            <input type="checkbox" id="kb-embeddings-enabled" checked>
-            <span>Semantic search for Knowledge Base <small>(embeds saved pages via OpenAI for meaning-based search &amp; Ask; a small extra API cost per save)</small></span>
-        </label>
-        <p class="hint">Your key is stored in Chrome sync storage and only sent to api.openai.com. Conversations and saved pages are stored locally on this device — no account needed.</p>
+
+        <div class="settings-group">
+            <h3 class="group-title">Knowledge base</h3>
+            <label class="checkbox-row" for="kb-embeddings-enabled">
+                <input type="checkbox" id="kb-embeddings-enabled" checked>
+                <span>
+                    Semantic search
+                    <small>Embeds saved pages so search and Ask match on meaning, not just keywords. Adds a small OpenAI cost per saved page.</small>
+                </span>
+            </label>
+        </div>
+
+        <div class="settings-group">
+            <h3 class="group-title">Your data</h3>
+            <p id="data-stats" class="data-stats">Counting…</p>
+            <div class="button-row">
+                <button id="export-data" class="secondary-btn">Export as JSON</button>
+                <button id="delete-data" class="secondary-btn danger">Delete all data</button>
+            </div>
+            <p class="field-hint">
+                Chats and saved pages are stored only in this browser profile. Your API key is kept in Chrome
+                storage and is sent to <code>api.openai.com</code> and nowhere else.
+                <a href="https://github.com/puscas-sergiu/webpage-context/blob/main/PRIVACY.md" target="_blank" rel="noopener noreferrer">Privacy policy</a>
+            </p>
+        </div>
+
+        <p class="version-line" id="version-line"></p>
     </section>
 
     <script src="popup.js"></script>

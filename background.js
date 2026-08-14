@@ -1467,6 +1467,43 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     break;
                 }
 
+                case 'getStats': {
+                    const index = await getIndex();
+                    const bookmarks = await kbAllBookmarks();
+                    sendResponse({ chats: Object.keys(index).length, saved: bookmarks.length });
+                    break;
+                }
+
+                case 'exportData': {
+                    const index = await getIndex();
+                    const conversations = [];
+                    for (const id of Object.keys(index)) {
+                        const conv = await getConv(id);
+                        if (conv) conversations.push(conv);
+                    }
+                    // Deliberately excludes the API key and any other setting
+                    // that would be unsafe to hand around in a plain file.
+                    sendResponse({
+                        data: {
+                            exportedAt: new Date().toISOString(),
+                            extensionVersion: chrome.runtime.getManifest().version,
+                            conversations,
+                            bookmarks: await kbAllBookmarksFull()
+                        }
+                    });
+                    break;
+                }
+
+                case 'deleteAllData': {
+                    for (const flight of kbAsks.values()) flight.controller.abort();
+                    await clearAllConversations();
+                    await kbClearAll();
+                    await chrome.storage.local.remove('drafts');
+                    queryEmbedCache.clear();
+                    sendResponse({ ok: true });
+                    break;
+                }
+
                 case 'testApiKey': {
                     const { apiKey, model } = await getSettings();
                     try {

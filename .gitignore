@@ -1,2 +1,11 @@
+# Packaged extension builds
+dist/
+
+# Scratch directory used while rendering store assets
+.store-build/
+
 node_modules/
+
+.DS_Store
+Thumbs.db
 package-lock.json

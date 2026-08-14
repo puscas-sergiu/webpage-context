@@ -1,18 +1,26 @@
 {
   "manifest_version": 3,
   "name": "Webpage Summarizer & Chat",
-  "version": "2.2.0",
-  "description": "Chat with any webpage or YouTube video using OpenAI, and save pages to a searchable knowledge base with smart indexing. Stored locally, no account needed.",
+  "short_name": "Page Chat",
+  "version": "2.3.0",
+  "description": "Summarize and chat with any page or YouTube video, then save it to a private, searchable knowledge base. Bring your own key.",
+  "homepage_url": "https://github.com/puscas-sergiu/webpage-context",
+  "minimum_chrome_version": "116",
   "permissions": [
-    "activeTab", "storage", "scripting", "unlimitedStorage"
+    "activeTab",
+    "storage",
+    "scripting",
+    "unlimitedStorage"
   ],
   "host_permissions": [
-    "https://api.openai.com/"
+    "https://api.openai.com/*"
   ],
   "action": {
     "default_popup": "popup.html",
+    "default_title": "Summarize or chat with this page",
     "default_icon": {
       "16": "icon16.png",
+      "32": "icon32.png",
       "48": "icon48.png",
       "128": "icon128.png"
     }
@@ -28,8 +36,12 @@
       "description": "Open Webpage Summarizer & Chat"
     }
   },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
   "icons": {
     "16": "icon16.png",
+    "32": "icon32.png",
     "48": "icon48.png",
     "128": "icon128.png"
   }
