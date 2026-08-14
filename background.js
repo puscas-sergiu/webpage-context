@@ -29,6 +29,11 @@ function normalizeUrl(raw) {
                 u.searchParams.delete(key);
             }
         }
+        // Collapse every form of a YouTube video link (youtu.be, /shorts, a
+        // resume timestamp, playlist and referrer params) onto one canonical
+        // URL, so a video always maps to a single conversation.
+        const videoId = youtubeVideoId(u.toString());
+        if (videoId) return `https://www.youtube.com/watch?v=${videoId}`;
         return u.toString();
     } catch {
         return raw || '';
@@ -40,6 +45,38 @@ function isRestrictedUrl(url) {
         || /^(chrome|edge|about|view-source|chrome-extension|moz-extension|devtools):/.test(url)
         || url.includes('chromewebstore.google.com')
         || url.includes('chrome.google.com/webstore');
+}
+
+// Watch pages, Shorts, live streams, youtu.be links and embeds all carry a
+// transcript. Must stay in sync with the copy in popup.js.
+function youtubeVideoId(url) {
+    try {
+        const u = new URL(url);
+        const host = u.hostname.replace(/^www\./, '');
+        if (host === 'youtu.be') return u.pathname.slice(1).split('/')[0] || '';
+        if (!/(^|\.)youtube(-nocookie)?\.com$/.test(host)) return '';
+        if (u.pathname === '/watch') return u.searchParams.get('v') || '';
+        const match = u.pathname.match(/^\/(?:shorts|live|embed|v)\/([^/?#]+)/);
+        return match ? match[1] : '';
+    } catch {
+        return '';
+    }
+}
+
+function isYouTubeVideoUrl(url) {
+    return !!youtubeVideoId(url);
+}
+
+// Transcripts carry [m:ss] markers. They help the model cite moments, but they
+// are noise for lexical indexing, embeddings and snippets.
+function stripTimestamps(text) {
+    return (text || '').replace(/^\[\d{1,2}(?::\d{2}){1,2}\]\s*/gm, '');
+}
+
+// Content stored by older versions used a "[Could not …]" string in place of
+// real content; newer conversations/bookmarks carry an explicit contentStatus.
+function isPlaceholderContent(text) {
+    return /^\[(?:Could not|No transcript|No page|Error)/.test(text || '');
 }
 
 async function getSettings() {
@@ -173,99 +210,412 @@ function extractPageContent() {
     return text || "[Could not extract meaningful content.]";
 }
 
-async function clickTranscriptButton() {
-    const buttonSelector = 'button[aria-label="Show transcript"]';
-    const transcriptPanelSelector = '#panels ytd-transcript-renderer, ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]';
+// Injected into YouTube video pages. Preferably in the MAIN world, where the
+// page's own `ytInitialPlayerResponse` / `ytcfg` globals are reachable; it
+// still works (via the inline <script> tags) in an isolated world.
+//
+// Sources, most to least reliable:
+//   1. timedtext — YouTube's own caption endpoint, taken from the player
+//      response. Complete, language-aware, and immune to DOM churn.
+//   2. panel DOM — scrape the transcript panel if it is already open.
+//   3. open panel — click "Show transcript", wait for it, then scrape.
+// If none of those produce text it falls back to the video description, so the
+// model still has something concrete to work with.
+//
+// The DOM layer understands both the current "modern transcript view"
+// (transcript-segment-view-model) and the older ytd-transcript-* renderers;
+// YouTube ships them to different users at the same time, which is why
+// scraping alone worked only some of the time.
+//
+// Returns { status: 'ok'|'partial'|'error', text, note, source, segments, language }.
+async function extractYouTubeTranscript() {
+    const MAX_CHARS = 24000;
+    const LINE_CHARS = 200;       // captions merged per timestamped line
+    const LINE_SECONDS = 30;      // …and never spanning more than this
+    const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-    try {
-        const transcriptPanel = document.querySelector(transcriptPanelSelector);
-        if (transcriptPanel && transcriptPanel.checkVisibility && transcriptPanel.checkVisibility()) {
-            return { success: true, alreadyOpen: true, message: "Transcript panel already open." };
-        } else if (transcriptPanel && !transcriptPanel.checkVisibility) {
-            const style = window.getComputedStyle(transcriptPanel);
-            if (style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0') {
-                return { success: true, alreadyOpen: true, message: "Transcript panel already open." };
-            }
+    function currentVideoId() {
+        try {
+            const u = new URL(location.href);
+            const v = u.searchParams.get('v');
+            if (v) return v;
+            if (u.hostname.replace(/^www\./, '') === 'youtu.be') return u.pathname.slice(1).split('/')[0] || '';
+            const match = u.pathname.match(/^\/(?:shorts|live|embed|v)\/([^/?#]+)/);
+            return match ? match[1] : '';
+        } catch {
+            return '';
         }
-
-        const descriptionContainer = document.querySelector('#description.ytd-watch-metadata, #description-inline-expander');
-        if (!descriptionContainer) {
-            const button = document.querySelector(buttonSelector);
-            if (button) {
-                button.click();
-                return { success: true, alreadyOpen: false, message: "Clicked 'Show transcript' button." };
-            }
-            return { success: false, message: "Could not find the 'Show transcript' button." };
-        }
-
-        const button = descriptionContainer.querySelector(buttonSelector);
-        if (button) {
-            button.click();
-            return { success: true, alreadyOpen: false, message: "Clicked 'Show transcript' button." };
-        }
-
-        const moreButton = descriptionContainer.querySelector('tp-yt-paper-button#expand, yt-button-shape button[aria-label="Show more"]');
-        if (moreButton) {
-            moreButton.click();
-            await new Promise(resolve => setTimeout(resolve, 300));
-            const buttonAfterMore = document.querySelector(buttonSelector);
-            if (buttonAfterMore) {
-                buttonAfterMore.click();
-                return { success: true, alreadyOpen: false, message: "Clicked 'Show more', then 'Show transcript'." };
-            }
-            return { success: false, message: "Couldn't find the 'Show transcript' button after expanding the description." };
-        }
-        return { success: false, message: "Could not find the 'Show transcript' button." };
-    } catch (error) {
-        return { success: false, message: `Error during button click attempt: ${error.message}` };
     }
-}
 
-async function extractYouTubeCaptionText() {
-    let transcriptText = '';
-    const MAX_WAIT_MS = 3000;
-    const CHECK_INTERVAL_MS = 500;
-    let waitedMs = 0;
+    function stamp(seconds) {
+        const total = Math.max(0, Math.floor(seconds || 0));
+        const h = Math.floor(total / 3600);
+        const m = Math.floor((total % 3600) / 60);
+        const s = total % 60;
+        const mm = h ? String(m).padStart(2, '0') : String(m);
+        return (h ? h + ':' : '') + mm + ':' + String(s).padStart(2, '0');
+    }
 
-    try {
-        const primarySelector = 'ytd-transcript-segment-renderer div.segment yt-formatted-string.segment-text';
+    // "1:23" / "1:02:03" -> seconds. Returns null for anything else.
+    function parseStamp(text) {
+        const parts = String(text || '').trim().split(':');
+        if (parts.length < 2 || parts.length > 3) return null;
+        const numbers = parts.map(part => parseInt(part, 10));
+        if (numbers.some(n => Number.isNaN(n))) return null;
+        return numbers.reduce((total, n) => total * 60 + n, 0);
+    }
 
-        const performExtraction = () => {
-            const segments = document.querySelectorAll(primarySelector);
-            if (segments && segments.length > 0) {
-                return Array.from(segments).map(seg => seg.textContent || '').join(' ').trim();
-            }
-            const fallbackSelector = 'ytd-transcript-body-renderer .cue-group yt-formatted-string';
-            const fallbackSegments = document.querySelectorAll(fallbackSelector);
-            if (fallbackSegments && fallbackSegments.length > 0) {
-                return Array.from(fallbackSegments).map(seg => seg.textContent || '').join(' ').trim();
-            }
-            return null;
+    function decodeEntities(text) {
+        return String(text || '')
+            .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(Number(code)))
+            .replace(/&#x([0-9a-f]+);/gi, (_, code) => String.fromCharCode(parseInt(code, 16)))
+            .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+            .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            .replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
+    }
+
+    // Merges captions into ~200-character lines prefixed with a timestamp, so
+    // the model can cite moments without paying for a stamp on every caption.
+    // A line is also cut when it would span more than LINE_SECONDS, so the
+    // stamp stays close to the words that follow it across pauses and silence.
+    // Auto-captions repeat the previous line as they roll, so drop repeats.
+    function formatSegments(segments) {
+        const lines = [];
+        let start = null;
+        let buffer = '';
+        let previous = '';
+
+        const flush = () => {
+            const text = buffer.replace(/\s+/g, ' ').trim();
+            if (text) lines.push((start === null ? '' : `[${stamp(start)}] `) + text);
+            buffer = '';
+            start = null;
         };
 
-        transcriptText = performExtraction();
-        while (transcriptText === null && waitedMs < MAX_WAIT_MS) {
-            await new Promise(resolve => setTimeout(resolve, CHECK_INTERVAL_MS));
-            waitedMs += CHECK_INTERVAL_MS;
-            transcriptText = performExtraction();
+        for (const segment of segments) {
+            const text = decodeEntities(segment.text || '').replace(/\s+/g, ' ').trim();
+            if (!text || text === previous) continue;
+            previous = text;
+            const at = typeof segment.start === 'number' && !Number.isNaN(segment.start) ? segment.start : null;
+            if (start !== null && at !== null && at - start >= LINE_SECONDS) flush();
+            if (start === null) start = at;
+            buffer += (buffer ? ' ' : '') + text;
+            if (buffer.length >= LINE_CHARS) flush();
         }
-
-        if (transcriptText === null || transcriptText === '') {
-            transcriptText = "[Could not automatically extract the YouTube transcript. It may be unavailable, or the page structure may have changed — try opening the transcript panel manually.]";
-        }
-    } catch (e) {
-        transcriptText = `[Error trying to extract YouTube transcript: ${e.message}]`;
+        flush();
+        return lines.join('\n');
     }
 
-    if (transcriptText && !transcriptText.startsWith("[")) {
-        transcriptText = transcriptText.replace(/\s\s+/g, ' ').trim();
-        const MAX_CONTENT_LENGTH = 24000;
-        if (transcriptText.length > MAX_CONTENT_LENGTH) {
-            transcriptText = transcriptText.substring(0, MAX_CONTENT_LENGTH) + "... [Transcript Truncated]";
+    // Keep the head and the tail of very long transcripts: a video's closing
+    // minutes usually carry the conclusion, which plain truncation throws away.
+    function clamp(text) {
+        if (text.length <= MAX_CHARS) return text;
+        const head = Math.floor(MAX_CHARS * 0.6);
+        const tail = MAX_CHARS - head;
+        return text.slice(0, head).replace(/\n[^\n]*$/, '')
+            + '\n\n… [middle of the transcript omitted for length] …\n\n'
+            + text.slice(-tail).replace(/^[^\n]*\n/, '');
+    }
+
+    // ---- 1. timedtext ----
+
+    // Brace-balanced slice of the JSON object following `marker`. A regex can't
+    // do this — the payload is full of nested braces and quoted braces.
+    function jsonAfter(source, marker, from) {
+        const at = source.indexOf(marker, from || 0);
+        if (at === -1) return { value: null, next: -1 };
+        const start = source.indexOf('{', at + marker.length);
+        if (start === -1) return { value: null, next: -1 };
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        for (let i = start; i < source.length; i++) {
+            const ch = source[i];
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (ch === '\\') escaped = true;
+                else if (ch === '"') inString = false;
+                continue;
+            }
+            if (ch === '"') inString = true;
+            else if (ch === '{') depth++;
+            else if (ch === '}' && --depth === 0) {
+                let value = null;
+                try { value = JSON.parse(source.slice(start, i + 1)); } catch { /* not the droid */ }
+                return { value, next: i + 1 };
+            }
+        }
+        return { value: null, next: -1 };
+    }
+
+    async function playerResponse(videoId) {
+        const matches = (candidate) => candidate?.captions
+            && (!videoId || !candidate?.videoDetails?.videoId || candidate.videoDetails.videoId === videoId);
+
+        if (matches(window.ytInitialPlayerResponse)) return window.ytInitialPlayerResponse;
+
+        for (const script of document.querySelectorAll('script')) {
+            const source = script.textContent || '';
+            if (!source.includes('ytInitialPlayerResponse')) continue;
+            let from = 0;
+            while (from !== -1) {
+                const { value, next } = jsonAfter(source, 'ytInitialPlayerResponse', from);
+                if (next === -1) break;
+                if (matches(value)) return value;
+                from = next;
+            }
+        }
+
+        // Last resort: ask InnerTube. This is the only source that stays correct
+        // after in-page navigation, where the inline script and (in some builds)
+        // the global still describe whichever video was loaded first.
+        if (!videoId) return null;
+        try {
+            const cfg = window.ytcfg;
+            const key = cfg?.get?.('INNERTUBE_API_KEY');
+            if (!key) return null;
+            const context = cfg?.get?.('INNERTUBE_CONTEXT') || {
+                client: {
+                    clientName: 'WEB',
+                    clientVersion: cfg?.get?.('INNERTUBE_CLIENT_VERSION') || '2.20240101.00.00'
+                }
+            };
+            const response = await fetch(`/youtubei/v1/player?key=${encodeURIComponent(key)}`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ videoId, context })
+            });
+            if (!response.ok) return null;
+            return await response.json();
+        } catch {
+            return null;
         }
     }
 
-    return transcriptText || "[No transcript text found or extracted.]";
+    // Prefer the spoken language, and a human-written track over auto-captions.
+    function pickTrack(tracks, spokenLanguage) {
+        const want = (spokenLanguage || document.documentElement.lang || navigator.language || 'en')
+            .split('-')[0].toLowerCase();
+        let best = null;
+        let bestScore = -Infinity;
+        for (const track of tracks) {
+            if (!track?.baseUrl) continue;
+            const lang = (track.languageCode || '').split('-')[0].toLowerCase();
+            let score = 0;
+            if (lang === want) score += 4;
+            if (track.kind !== 'asr') score += 2;
+            if (lang === 'en') score += 1;
+            if (score > bestScore) { best = track; bestScore = score; }
+        }
+        return best;
+    }
+
+    async function fetchJson3(baseUrl) {
+        const url = new URL(baseUrl, location.origin);
+        url.searchParams.set('fmt', 'json3');
+        const response = await fetch(url.toString(), { credentials: 'same-origin' });
+        if (!response.ok) return [];
+        const data = await response.json();
+        return (data?.events || [])
+            // `aAppend` events re-send text that is already on screen.
+            .filter(event => Array.isArray(event.segs) && !event.aAppend)
+            .map(event => ({
+                start: (event.tStartMs || 0) / 1000,
+                text: event.segs.map(seg => seg.utf8 || '').join('')
+            }));
+    }
+
+    async function fetchXml(baseUrl) {
+        const response = await fetch(baseUrl, { credentials: 'same-origin' });
+        if (!response.ok) return [];
+        const doc = new DOMParser().parseFromString(await response.text(), 'text/xml');
+        return Array.from(doc.querySelectorAll('text')).map(node => ({
+            start: parseFloat(node.getAttribute('start') || '0'),
+            text: node.textContent || ''
+        }));
+    }
+
+    async function fromTimedText(videoId) {
+        const player = await playerResponse(videoId);
+        const tracks = player?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
+        if (!tracks.length) {
+            return { segments: [], reason: player ? 'no-captions' : 'no-player-response' };
+        }
+        const track = pickTrack(tracks, player?.videoDetails?.defaultAudioLanguage);
+        if (!track) return { segments: [], reason: 'no-captions' };
+
+        let segments = [];
+        try {
+            segments = await fetchJson3(track.baseUrl);
+        } catch { /* fall through to the XML format */ }
+        if (!segments.length) {
+            try { segments = await fetchXml(track.baseUrl); } catch { /* give up on this source */ }
+        }
+        return {
+            segments,
+            language: track.languageCode || '',
+            reason: segments.length ? '' : 'captions-unavailable'
+        };
+    }
+
+    // ---- 2/3. transcript panel ----
+
+    const SEGMENT_SELECTORS = [
+        'transcript-segment-view-model',                  // current "modern transcript view"
+        'ytd-transcript-segment-renderer',                // previous engagement panel
+        'ytd-transcript-body-renderer .cue-group',        // legacy transcript body
+        '[class*="TranscriptSegmentViewModelHost"]'       // renamed element, same markup
+    ];
+    const TIMESTAMP_SELECTOR = '.segment-timestamp, .cue-group-start-offset, [class*="Timestamp"]:not([class*="A11y"])';
+    const TEXT_SELECTOR = 'span[role="text"], yt-formatted-string.segment-text, .segment-text, .cue';
+
+    function segmentNodes() {
+        for (const selector of SEGMENT_SELECTORS) {
+            const nodes = document.querySelectorAll(selector);
+            if (nodes.length) return Array.from(nodes);
+        }
+        return [];
+    }
+
+    function parseSegmentNode(node) {
+        const textNodes = node.querySelectorAll(TEXT_SELECTOR);
+        let text = Array.from(textNodes).map(el => (el.textContent || '').trim()).filter(Boolean).join(' ');
+        if (!text) {
+            // Unknown markup: take everything except the timestamp and the
+            // screen-reader label that sits next to it ("1 minute, 7 seconds").
+            const clone = node.cloneNode(true);
+            clone.querySelectorAll('[class*="Timestamp"], .segment-timestamp, .cue-group-start-offset').forEach(el => el.remove());
+            text = (clone.textContent || '').trim();
+        }
+        const timestamp = node.querySelector(TIMESTAMP_SELECTOR);
+        return { start: parseStamp(timestamp?.textContent), text };
+    }
+
+    function findTranscriptButton() {
+        // Structural first: the description carries a dedicated transcript
+        // section, which is the same element in every language.
+        const section = document.querySelector('ytd-video-description-transcript-section-renderer');
+        const structural = section?.querySelector('button, tp-yt-paper-button');
+        if (structural) return structural;
+        // Label matching covers the layouts without that section. The list is
+        // best-effort — timedtext above is what makes this path rarely needed.
+        return document.querySelector([
+            'button[aria-label*="transcri" i]',   // en, es, fr, pt
+            'button[aria-label*="transkri" i]',   // de, nl, pl, tr, id
+            'button[aria-label*="trascri" i]',    // it
+            'button[aria-label*="расшифров" i]',
+            'button[aria-label*="字幕"]',
+            'button[aria-label*="문자"]'
+        ].join(', '));
+    }
+
+    async function openPanel() {
+        const panel = document.querySelector(
+            'ytd-engagement-panel-section-list-renderer[target-id*="transcript" i], ytd-transcript-renderer'
+        );
+        if ((panel?.getAttribute('visibility') || '').includes('EXPANDED')) return true;
+
+        let button = findTranscriptButton();
+        if (!button) {
+            // The transcript button lives behind the description's "…more".
+            const expander = document.querySelector('#description-inline-expander #expand, tp-yt-paper-button#expand');
+            if (expander) {
+                expander.click();
+                await sleep(300);
+                button = findTranscriptButton();
+            }
+        }
+        if (!button) return false;
+        button.click();
+        return true;
+    }
+
+    async function waitForSegments(timeoutMs) {
+        const deadline = Date.now() + timeoutMs;
+        let nodes = segmentNodes();
+        while (!nodes.length && Date.now() < deadline) {
+            await sleep(200);
+            nodes = segmentNodes();
+        }
+        // Segments stream in — wait for the count to stop growing.
+        let previous = -1;
+        while (nodes.length && nodes.length !== previous && Date.now() < deadline) {
+            previous = nodes.length;
+            await sleep(250);
+            nodes = segmentNodes();
+        }
+        return nodes;
+    }
+
+    function videoDescription() {
+        const container = document.querySelector(
+            '#description-inline-expander, ytd-expandable-video-description-body-renderer, #description.ytd-watch-metadata'
+        );
+        let text = (container?.innerText || container?.textContent || '').trim();
+        if (!text) text = (document.querySelector('meta[name="description"]')?.content || '').trim();
+        return text.replace(/\s\s+/g, ' ').slice(0, 4000);
+    }
+
+    // ---- run ----
+
+    try {
+        const videoId = currentVideoId();
+        let segments = [];
+        let source = '';
+        let language = '';
+
+        const captions = await fromTimedText(videoId);
+        if (captions.segments.length) {
+            segments = captions.segments;
+            source = 'captions';
+            language = captions.language;
+        }
+
+        if (!segments.length) {
+            const open = segmentNodes();
+            if (open.length) {
+                segments = open.map(parseSegmentNode);
+                source = 'panel';
+            }
+        }
+
+        if (!segments.length) {
+            const opened = await openPanel();
+            const nodes = await waitForSegments(opened ? 8000 : 1500);
+            if (nodes.length) {
+                segments = nodes.map(parseSegmentNode);
+                source = 'panel';
+            }
+        }
+
+        if (segments.length) {
+            const text = clamp(formatSegments(segments));
+            if (text) {
+                return { status: 'ok', text, note: '', source, segments: segments.length, language };
+            }
+        }
+
+        const description = videoDescription();
+        const note = captions.reason === 'no-captions'
+            ? 'This video has no captions, so no transcript is available. The text below is the video description.'
+            : 'The transcript could not be read from this video. The text below is the video description.';
+        if (description) {
+            return { status: 'partial', text: description, note, source: 'description', segments: 0, language: '' };
+        }
+        return {
+            status: 'error',
+            text: '',
+            note: captions.reason === 'no-captions'
+                ? 'This video has no captions, so no transcript is available.'
+                : 'No transcript or description could be read from this video page.',
+            source: '',
+            segments: 0,
+            language: ''
+        };
+    } catch (error) {
+        return { status: 'error', text: '', note: `Transcript extraction failed: ${error.message}`, source: '', segments: 0, language: '' };
+    }
 }
 
 // =============== OpenAI ===============
@@ -429,12 +779,18 @@ function buildApiMessages(conv) {
     const isVideo = conv.contentType === 'video';
     let system = `You are a helpful assistant inside a Chrome extension. The user is viewing: "${conv.title}" (${conv.url}). Help them understand and discuss this ${isVideo ? 'video' : 'page'}. Format responses in Markdown (short headings, bullets, bold for key terms) and keep them focused.`;
 
-    if (conv.pageContent && !conv.pageContent.startsWith('[')) {
-        system += isVideo
-            ? `\n\nVideo transcript:\n"""\n${conv.pageContent}\n"""`
-            : `\n\nExtracted page content:\n"""\n${conv.pageContent}\n"""`;
+    if (hasUsableContent(conv)) {
+        if (conv.contentNote) system += `\n\nNote: ${conv.contentNote}`;
+        if (isVideo && conv.contentStatus !== 'partial') {
+            system += `\n\nVideo transcript (each line is prefixed with the [m:ss] timestamp where it starts — cite those when it helps):\n"""\n${conv.pageContent}\n"""`;
+        } else {
+            system += `\n\nExtracted ${isVideo ? 'video' : 'page'} content:\n"""\n${conv.pageContent}\n"""`;
+        }
     } else {
-        system += `\n\nNote: the page content could not be extracted${conv.pageContent ? ` (${conv.pageContent})` : ''}. Answer from the URL/title and general knowledge, and say when you are unsure.`;
+        const reason = conv.contentNote || (conv.pageContent && isPlaceholderContent(conv.pageContent) ? conv.pageContent : '');
+        system += `\n\nNote: the ${isVideo ? 'video transcript' : 'page content'} could not be extracted${reason ? ` (${reason})` : ''}.`
+            + ' Answer from the URL/title and general knowledge, say plainly that you could not read the'
+            + ` ${isVideo ? 'transcript' : 'page'}, and flag anything you are unsure about.`;
     }
 
     const messages = [{ role: 'system', content: system }];
@@ -452,56 +808,100 @@ function buildApiMessages(conv) {
 // (ensureContext) and knowledge-base bookmarking.
 async function extractForUrl(tab, wantVideo, setStatus) {
     if (wantVideo) {
-        setStatus?.('Opening video transcript…');
-        try {
-            const clickResults = await chrome.scripting.executeScript({
-                target: { tabId: tab.id },
-                func: clickTranscriptButton
-            });
-            const result = clickResults?.[0]?.result;
-            if (result && !result.success) {
-                setStatus?.('Transcript panel not found, trying to read it anyway…');
+        setStatus?.('Reading video transcript…');
+        // The MAIN world is where YouTube keeps the player response. Only if
+        // injecting there fails outright do we retry in the isolated world,
+        // which still reaches the inline scripts and the DOM fallbacks.
+        let result = null;
+        for (const world of ['MAIN', 'ISOLATED']) {
+            try {
+                const results = await chrome.scripting.executeScript({
+                    target: { tabId: tab.id },
+                    world,
+                    func: extractYouTubeTranscript
+                });
+                result = results?.[0]?.result || null;
+            } catch (e) {
+                console.warn(`Transcript extraction failed (${world} world):`, e);
             }
-        } catch (e) {
-            console.warn('Transcript button click failed:', e);
+            if (result) break; // A verdict from the MAIN world is the best available.
         }
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        setStatus?.('Reading transcript…');
-        const results = await chrome.scripting.executeScript({
-            target: { tabId: tab.id },
-            func: extractYouTubeCaptionText
-        });
+        if (result?.text) {
+            console.log(`Transcript via ${result.source} (${result.segments} segments${result.language ? ', ' + result.language : ''})`);
+            return {
+                content: result.text,
+                contentType: 'video',
+                contentStatus: result.status,
+                contentNote: result.note || ''
+            };
+        }
         return {
-            content: typeof results?.[0]?.result === 'string' ? results[0].result : '[Could not extract transcript.]',
-            contentType: 'video'
+            content: '',
+            contentType: 'video',
+            contentStatus: 'error',
+            contentNote: result?.note || 'The transcript could not be read from this video.'
         };
     }
+
     setStatus?.('Reading page…');
-    const results = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: extractPageContent
-    });
-    return {
-        content: typeof results?.[0]?.result === 'string' ? results[0].result : '[Could not extract page content.]',
-        contentType: 'page'
-    };
+    let text = '';
+    try {
+        const results = await chrome.scripting.executeScript({
+            target: { tabId: tab.id },
+            func: extractPageContent
+        });
+        text = typeof results?.[0]?.result === 'string' ? results[0].result : '';
+    } catch (e) {
+        console.warn('Page extraction failed:', e);
+    }
+    if (!text || isPlaceholderContent(text)) {
+        return {
+            content: '',
+            contentType: 'page',
+            contentStatus: 'error',
+            contentNote: 'No readable text could be extracted from this page.'
+        };
+    }
+    return { content: text, contentType: 'page', contentStatus: 'ok', contentNote: '' };
+}
+
+// True when the conversation holds content the model can actually rely on.
+// Conversations saved by older versions have no contentStatus and stored a
+// "[Could not …]" placeholder string instead.
+function hasUsableContent(conv) {
+    if (!conv?.pageContent) return false;
+    if (conv.contentStatus) return conv.contentStatus !== 'error';
+    return !isPlaceholderContent(conv.pageContent);
 }
 
 // Extracts (or re-extracts) page/video content into the conversation when needed.
-// Chat messages reuse previously stored content; summarize actions always refresh it.
+// Chat messages reuse previously stored content; summarize actions always refresh
+// it, as does any conversation whose stored content is missing or came from the
+// wrong extractor (e.g. a video chat that first captured the YouTube chrome).
 async function ensureContext(conv, mode, tab, setStatus) {
-    const wantVideo = mode === 'summarizeVideo';
-    const isSummarizeAction = mode === 'summarize' || wantVideo;
-    if (conv.pageContent && !isSummarizeAction) return;
-
     const tabUrl = tab?.url || '';
+    const wantVideo = tabUrl ? isYouTubeVideoUrl(tabUrl) : conv.contentType === 'video';
+    const isSummarizeAction = mode === 'summarize' || mode === 'summarizeVideo';
+    const stale = !hasUsableContent(conv) || (wantVideo && conv.contentType !== 'video');
+
+    if (!isSummarizeAction && !stale) return;
+    // Don't re-run a failing extraction on every chat message — one retry is
+    // enough unless the user explicitly asks for a fresh summary.
+    if (!isSummarizeAction && (conv.contentAttempts || 0) >= 2) return;
+
     if (!tab?.id || normalizeUrl(tabUrl) !== conv.url || isRestrictedUrl(tabUrl)) {
         return; // Can't extract from this tab; rely on stored content if any.
     }
 
+    conv.contentAttempts = (conv.contentAttempts || 0) + 1;
     const extracted = await extractForUrl(tab, wantVideo, setStatus);
+    // A failed re-read must not wipe content we already have.
+    if (!extracted.content && hasUsableContent(conv) && conv.contentType === extracted.contentType) return;
+
     conv.pageContent = extracted.content;
     conv.contentType = extracted.contentType;
+    conv.contentStatus = extracted.contentStatus;
+    conv.contentNote = extracted.contentNote;
 }
 
 async function runGeneration(conv, mode, tab) {
@@ -591,7 +991,7 @@ function termCounts(bookmark) {
     add((bookmark.tags || []).join(' '), 4);
     add((bookmark.keywords || []).join(' '), 3);
     add(bookmark.summary, 2);
-    add(bookmark.pageContent, 1);
+    add(stripTimestamps(bookmark.pageContent), 1);
     return counts;
 }
 
@@ -608,15 +1008,15 @@ function cosineSim(a, b) {
 }
 
 function snippetFrom(bookmark) {
-    const text = (bookmark.summary || bookmark.pageContent || '').trim();
+    const text = (bookmark.summary || stripTimestamps(bookmark.pageContent) || '').trim();
     return text.length > 220 ? text.slice(0, 220) + '…' : text;
 }
 
 // Asks the model for a title, summary, tags and keywords as JSON. Tolerant of
 // ```json fences and stray prose. Returns {} on any failure so save still succeeds.
 async function generateMetadata(apiKey, model, bookmark) {
-    const body = (bookmark.pageContent || '').slice(0, 12000);
-    if (!body || body.startsWith('[')) return {};
+    const body = stripTimestamps(bookmark.pageContent).slice(0, 12000);
+    if (!body || isPlaceholderContent(body)) return {};
     const prompt = `You are indexing a saved ${bookmark.contentType === 'video' ? 'video' : 'web page'} for a personal knowledge base.\n`
         + `Title: "${bookmark.title}"\nURL: ${bookmark.url}\n\nContent:\n"""\n${body}\n"""\n\n`
         + 'Respond with ONLY a JSON object (no prose, no code fences) of the form:\n'
@@ -666,7 +1066,7 @@ async function enrichBookmark(id) {
     if (embeddingsEnabled) {
         try {
             const input = `${bookmark.aiTitle || bookmark.title}\n${bookmark.summary || ''}\n`
-                + (bookmark.pageContent || '').slice(0, KB_EMBED_CHARS);
+                + stripTimestamps(bookmark.pageContent).slice(0, KB_EMBED_CHARS);
             vector = await callEmbeddings(apiKey, DEFAULT_EMBEDDING_MODEL, input);
         } catch (e) {
             console.warn('Embedding failed:', e);
@@ -744,7 +1144,7 @@ async function retrieveTopK(query, mode, k = KB_TOP_K) {
 function buildAskMessages(question, sources) {
     let context = '';
     sources.forEach((source, i) => {
-        const body = (source.summary || source.pageContent || '').slice(0, 2500);
+        const body = (source.summary || stripTimestamps(source.pageContent) || '').slice(0, 2500);
         context += `\n[${i + 1}] ${source.aiTitle || source.title} (${source.url})\n${body}\n`;
     });
     const system = 'You are answering questions using the user\'s saved knowledge base. '
@@ -880,7 +1280,10 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                             createdAt: Date.now(),
                             messages: [],
                             pageContent: '',
-                            contentType: ''
+                            contentType: '',
+                            contentStatus: '',
+                            contentNote: '',
+                            contentAttempts: 0
                         };
                         const active = await getActiveMap();
                         active[url] = conv.id;
@@ -961,7 +1364,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                     let content = '';
                     let contentType = 'page';
                     if (canExtract) {
-                        const wantVideo = (tab.url || '').includes('youtube.com/watch');
+                        const wantVideo = isYouTubeVideoUrl(tab.url || '');
                         try {
                             const extracted = await extractForUrl(tab, wantVideo);
                             content = extracted.content;
@@ -971,9 +1374,9 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         }
                     }
                     // Fall back to a linked conversation's cached content if extraction failed.
-                    if ((!content || content.startsWith('[')) && request.convId) {
+                    if (!content && request.convId) {
                         const conv = await getConv(request.convId);
-                        if (conv?.pageContent) { content = conv.pageContent; contentType = conv.contentType || 'page'; }
+                        if (hasUsableContent(conv)) { content = conv.pageContent; contentType = conv.contentType || 'page'; }
                     }
 
                     const existing = await kbFindByUrl(url);
