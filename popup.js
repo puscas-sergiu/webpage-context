@@ -42,7 +42,11 @@ const els = {
     modelSelect: document.getElementById('model-select'),
     saveSettings: document.getElementById('save-settings'),
     settingsStatus: document.getElementById('settings-status'),
-    kbEmbeddingsEnabled: document.getElementById('kb-embeddings-enabled')
+    kbEmbeddingsEnabled: document.getElementById('kb-embeddings-enabled'),
+    dataStats: document.getElementById('data-stats'),
+    exportData: document.getElementById('export-data'),
+    deleteData: document.getElementById('delete-data'),
+    versionLine: document.getElementById('version-line')
 };
 
 const ICONS = {
@@ -109,6 +113,41 @@ function relTime(ts) {
     return new Date(ts).toLocaleDateString();
 }
 
+// Makes a non-button element behave like one for pointer *and* keyboard users.
+function makeActivatable(el, onActivate) {
+    el.setAttribute('role', 'button');
+    el.tabIndex = 0;
+    el.addEventListener('click', onActivate);
+    el.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onActivate();
+        }
+    });
+}
+
+// Two-step confirmation on a button: the first click arms it, a second within
+// the timeout commits. Replaces window.confirm(), which can dismiss the popup.
+function armConfirm(button, { armedLabel, restLabel, timeout = 3000, onConfirm }) {
+    let timer = null;
+    const disarm = () => {
+        clearTimeout(timer);
+        button.classList.remove('armed');
+        button.textContent = restLabel;
+    };
+    button.addEventListener('click', async () => {
+        if (!button.classList.contains('armed')) {
+            button.classList.add('armed');
+            button.textContent = armedLabel;
+            timer = setTimeout(disarm, timeout);
+            return;
+        }
+        disarm();
+        await onConfirm();
+    });
+    return disarm;
+}
+
 function send(message) {
     return new Promise(resolve => {
         chrome.runtime.sendMessage(message, response => {
@@ -129,18 +168,24 @@ function escapeHtml(s) {
 }
 
 function renderInline(text) {
-    // Tokenize code spans first so other inline rules don't touch them.
-    return text.split(/(`[^`]*`)/).map(part => {
-        if (part.length > 1 && part.startsWith('`') && part.endsWith('`')) {
-            return '<code>' + escapeHtml(part.slice(1, -1)) + '</code>';
-        }
-        let s = escapeHtml(part);
-        s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-        s = s.replace(/(^|\W)\*([^*\s](?:[^*]*[^*\s])?)\*/g, '$1<em>$2</em>');
-        s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
-            '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
-        return s;
-    }).join('');
+    // Lift code spans out to placeholders first. Splitting on them instead would
+    // scope the emphasis rules to each fragment, so a very common shape in model
+    // output — **`fetch()` returns a promise** — would keep its literal asterisks.
+    const codes = [];
+    let s = String(text).replace(/`([^`]*)`/g, (_, code) => {
+        codes.push(code);
+        return `\u0000${codes.length - 1}\u0000`;
+    });
+
+    s = escapeHtml(s);
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/(^|\W)\*([^*\s](?:[^*]*[^*\s])?)\*/g, '$1<em>$2</em>');
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g,
+        '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+    // Placeholders survive escaping untouched (it only rewrites & < > ").
+    return s.replace(/\u0000(\d+)\u0000/g,
+        (_, index) => '<code>' + escapeHtml(codes[Number(index)]) + '</code>');
 }
 
 function renderMarkdown(text) {
@@ -223,12 +268,16 @@ function showView(name) {
     els.viewHistory.classList.toggle('active', name === 'history');
     els.viewKb.classList.toggle('active', name === 'kb');
     els.viewSettings.classList.toggle('active', name === 'settings');
-    els.navKb.classList.toggle('active', name === 'kb');
-    els.navHistory.classList.toggle('active', name === 'history');
-    els.navSettings.classList.toggle('active', name === 'settings');
+
+    for (const [button, view] of [[els.navKb, 'kb'], [els.navHistory, 'history'], [els.navSettings, 'settings']]) {
+        button.classList.toggle('active', name === view);
+        button.setAttribute('aria-pressed', String(name === view));
+    }
+
     if (name === 'history') renderHistory();
     if (name === 'kb') renderKB();
-    if (name === 'chat') els.userInput.focus();
+    if (name === 'settings') refreshDataStats();
+    if (name === 'chat' && !els.userInput.disabled) els.userInput.focus();
 }
 
 function currentView() {
@@ -637,18 +686,21 @@ async function renderHistory() {
         });
 
         row.append(icon, main, del);
-        row.addEventListener('click', () => openConversation(item.id));
+        makeActivatable(row, () => openConversation(item.id));
         els.historyList.appendChild(row);
     }
 }
 
-els.clearHistoryBtn.addEventListener('click', async () => {
-    if (!confirm('Delete all saved chats? This cannot be undone.')) return;
-    await send({ type: 'clearAllConversations' });
-    conv = null;
-    showBanner('');
-    renderMessages();
-    renderHistory();
+armConfirm(els.clearHistoryBtn, {
+    restLabel: 'Clear all',
+    armedLabel: 'Tap again to delete',
+    onConfirm: async () => {
+        await send({ type: 'clearAllConversations' });
+        conv = null;
+        showBanner('');
+        renderMessages();
+        renderHistory();
+    }
 });
 
 async function openConversation(convId) {
@@ -699,7 +751,10 @@ function attachToFlight(state) {
 function setBookmarked(on) {
     bookmarked = on;
     els.bookmarkBtn.classList.toggle('active', on);
-    els.bookmarkBtn.title = on ? 'Saved — click to remove from Knowledge Base' : 'Save to Knowledge Base';
+    els.bookmarkBtn.setAttribute('aria-pressed', String(on));
+    const label = on ? 'Saved — click to remove from Knowledge Base' : 'Save to Knowledge Base';
+    els.bookmarkBtn.title = label;
+    els.bookmarkBtn.setAttribute('aria-label', label);
 }
 
 async function refreshBookmarkState() {
@@ -734,6 +789,8 @@ function showKBTab(tab) {
     const browse = tab === 'browse';
     els.kbTabBrowse.classList.toggle('active', browse);
     els.kbTabAsk.classList.toggle('active', !browse);
+    els.kbTabBrowse.setAttribute('aria-pressed', String(browse));
+    els.kbTabAsk.setAttribute('aria-pressed', String(!browse));
     els.kbBrowse.hidden = !browse;
     els.kbAsk.hidden = browse;
     if (!browse) els.kbQuestion.focus();
@@ -823,7 +880,7 @@ function renderKBResults(items) {
         });
 
         row.append(icon, main, del);
-        row.addEventListener('click', () => chrome.tabs.create({ url: item.url }));
+        makeActivatable(row, () => chrome.tabs.create({ url: item.url }));
         els.kbList.appendChild(row);
     }
 }
@@ -852,8 +909,20 @@ function submitKBQuestion() {
 
 async function askKB(question) {
     kbAskText = '';
-    els.kbAnswer.innerHTML = `<div class="message user">${escapeHtml(question)}</div>`
-        + '<div class="message assistant typing"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>';
+    els.kbAnswer.replaceChildren();
+
+    const asked = document.createElement('div');
+    asked.className = 'message user';
+    asked.textContent = question;
+
+    const typing = document.createElement('div');
+    typing.className = 'message assistant typing';
+    for (let i = 0; i < 3; i++) {
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        typing.appendChild(dot);
+    }
+    els.kbAnswer.append(asked, typing);
     setKBAsking(true);
     const response = await send({ type: 'askKB', question });
     if (!response?.ok) {
@@ -966,7 +1035,12 @@ els.kbAskBtn.addEventListener('click', () => {
 // =============== Settings ===============
 
 els.toggleKey.addEventListener('click', () => {
-    els.apiKey.type = els.apiKey.type === 'password' ? 'text' : 'password';
+    const revealed = els.apiKey.type === 'password';
+    els.apiKey.type = revealed ? 'text' : 'password';
+    els.toggleKey.setAttribute('aria-pressed', String(revealed));
+    const label = revealed ? 'Hide API key' : 'Show API key';
+    els.toggleKey.title = revealed ? 'Hide key' : 'Show key';
+    els.toggleKey.setAttribute('aria-label', label);
 });
 
 els.saveSettings.addEventListener('click', async () => {
@@ -997,9 +1071,70 @@ function showSettingsStatus(text, type) {
     els.settingsStatus.hidden = !text;
 }
 
+// =============== Settings · Your data ===============
+
+function plural(count, noun) {
+    return `${count} ${noun}${count === 1 ? '' : 's'}`;
+}
+
+async function refreshDataStats() {
+    const response = await send({ type: 'getStats' });
+    if (!response) {
+        els.dataStats.textContent = 'Could not read local storage.';
+        return;
+    }
+    els.dataStats.textContent = response.chats === 0 && response.saved === 0
+        ? 'Nothing stored yet.'
+        : `${plural(response.chats, 'chat')} · ${plural(response.saved, 'saved page')}`;
+}
+
+els.exportData.addEventListener('click', async () => {
+    els.exportData.disabled = true;
+    els.exportData.textContent = 'Exporting…';
+    try {
+        const response = await send({ type: 'exportData' });
+        if (!response?.data) throw new Error(response?.error || 'Export failed.');
+
+        const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `webpage-chat-export-${new Date().toISOString().slice(0, 10)}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 10000);
+        showSettingsStatus('Exported. Your API key is not included.', 'success');
+    } catch (error) {
+        showSettingsStatus(error.message, 'error');
+    }
+    els.exportData.textContent = 'Export as JSON';
+    els.exportData.disabled = false;
+});
+
+armConfirm(els.deleteData, {
+    restLabel: 'Delete all data',
+    armedLabel: 'Tap again to erase',
+    onConfirm: async () => {
+        const response = await send({ type: 'deleteAllData' });
+        if (!response?.ok) {
+            showSettingsStatus(response?.error || 'Could not delete data.', 'error');
+            return;
+        }
+        conv = null;
+        setBookmarked(false);
+        showBanner('');
+        renderMessages();
+        await refreshDataStats();
+        showSettingsStatus('All chats and saved pages deleted.', 'success');
+    }
+});
+
 // =============== Init ===============
 
 async function init() {
+    els.versionLine.textContent = `Version ${chrome.runtime.getManifest().version}`;
+
     let tab = null;
     try {
         [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -1047,6 +1182,7 @@ async function init() {
     if (!settings.openaiApiKey) {
         showView('settings');
         showSettingsStatus('Add your OpenAI API key to get started.', 'info');
+        els.apiKey.focus();
     } else if (!restricted) {
         els.userInput.focus();
     }

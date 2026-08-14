@@ -106,6 +106,14 @@ async function kbAllBookmarks() {
     return items;
 }
 
+// Full records, including the heavy pageContent field. Used by the data export
+// in Settings, which should hand back everything the extension stored.
+async function kbAllBookmarksFull() {
+    const db = await kbOpen();
+    const tx = db.transaction('bookmarks', 'readonly');
+    return (await kbReq(tx.objectStore('bookmarks').getAll())) || [];
+}
+
 async function kbDeleteBookmark(id) {
     const db = await kbOpen();
     const tx = db.transaction(['bookmarks', 'vectors'], 'readwrite');
