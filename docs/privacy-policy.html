@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Webpage Summarizer &amp; Chat</title>
+<meta name="description" content="Privacy policy for the Webpage Summarizer &amp; Chat Chrome extension: no backend, no analytics, no tracking.">
+<style>
+  :root {
+    --bg: #ffffff; --text: #1f2328; --muted: #5b6472; --border: #e2e5e9;
+    --accent: #2563eb; --surface: #f6f7f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181d; --text: #e5e7eb; --muted: #9aa1ac; --border: #30343d;
+      --accent: #6ea8fe; --surface: #1e2128;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 48px 24px 96px; max-width: 760px;
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px; line-height: 1.65; color: var(--text); background: var(--bg);
+  }
+  header { display: flex; align-items: center; gap: 14px; margin-bottom: 8px; }
+  header img { width: 44px; height: 44px; border-radius: 10px; }
+  h1 { font-size: 27px; line-height: 1.25; margin: 0; letter-spacing: -.01em; }
+  .meta { color: var(--muted); font-size: 14px; margin: 0 0 36px; }
+  h2 { font-size: 20px; margin: 40px 0 10px; letter-spacing: -.01em; }
+  h3 { font-size: 16px; margin: 26px 0 6px; }
+  p, li { color: var(--text); }
+  a { color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14.5px; }
+  th, td { border: 1px solid var(--border); padding: 8px 11px; text-align: left; vertical-align: top; }
+  th { background: var(--surface); font-weight: 600; }
+  code {
+    font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 13.5px; background: var(--surface); padding: 1px 5px; border-radius: 4px;
+  }
+  .lede {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 18px 20px; margin: 0 0 8px;
+  }
+  footer { margin-top: 56px; padding-top: 20px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+  .wrap { overflow-x: auto; }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="../icon128.png" alt="">
+  <h1>Privacy Policy — Webpage Summarizer &amp; Chat</h1>
+</header>
+<p class="meta">Last updated: 14 August 2026 · Applies to all versions from 2.2.0</p>
+
+<p class="lede">
+  This extension has no backend. There is no account, no analytics, no tracking and no
+  server operated by the developer. Everything it stores stays in your own browser
+  profile. The only network requests it makes are to the OpenAI API, using the API key
+  you supply, and only when you ask it to do something.
+</p>
+
+<h2>What the extension stores, and where</h2>
+<div class="wrap">
+<table>
+  <tr><th>Data</th><th>Where it is stored</th><th>Leaves your device?</th></tr>
+  <tr><td>Your OpenAI API key</td><td><code>chrome.storage.sync</code></td><td>Only via Chrome Sync, to your own signed-in Chrome profile</td></tr>
+  <tr><td>Model choice, semantic-search toggle</td><td><code>chrome.storage.sync</code></td><td>Same as above</td></tr>
+  <tr><td>Conversations and extracted page text</td><td><code>chrome.storage.local</code></td><td>No</td></tr>
+  <tr><td>Unsent message drafts</td><td><code>chrome.storage.local</code></td><td>No</td></tr>
+  <tr><td>Saved pages, summaries, tags, embeddings, search index</td><td>IndexedDB (<code>webpageKB</code>)</td><td>No</td></tr>
+</table>
+</div>
+
+<p>
+  <strong>A note on Chrome Sync.</strong> Your API key and settings are kept in
+  <code>chrome.storage.sync</code> so they follow you between computers where you are
+  signed into the same Chrome profile. If Chrome Sync is enabled, Google transmits and
+  stores that data as part of your own Chrome profile, under
+  <a href="https://policies.google.com/privacy">Google's privacy policy</a>. If you would
+  rather your key never leave one machine, turn off extension syncing in Chrome's sync
+  settings.
+</p>
+<p>
+  Conversations, saved pages and embeddings are <strong>never</strong> synced. They live
+  only in the browser profile on the device where you created them.
+</p>
+
+<h2>What is sent to OpenAI</h2>
+<p>When — and only when — you take an action, the extension sends data to <code>https://api.openai.com</code>:</p>
+<div class="wrap">
+<table>
+  <tr><th>Your action</th><th>What is sent</th></tr>
+  <tr><td>Summarize a page, or ask a question about it</td><td>The page's title, URL and extracted text (up to 24,000 characters), plus the recent messages in that conversation</td></tr>
+  <tr><td>Summarize a video</td><td>The video's title, URL and transcript text</td></tr>
+  <tr><td>Save a page to the Knowledge Base</td><td>The page's title, URL and extracted text, so a title, summary and tags can be generated</td></tr>
+  <tr><td>Save a page with semantic search enabled</td><td>The same text again, to the embeddings endpoint</td></tr>
+  <tr><td>Search or Ask with semantic search enabled</td><td>Your search query or question</td></tr>
+  <tr><td>Press "Save &amp; test" in Settings</td><td>A one-word test message</td></tr>
+</table>
+</div>
+<p>
+  These requests are authenticated with your own API key and billed to your own OpenAI
+  account. They are governed by OpenAI's
+  <a href="https://openai.com/policies/privacy-policy">Privacy Policy</a> and
+  <a href="https://platform.openai.com/docs/guides/your-data">API data usage policies</a>.
+  At the time of writing, OpenAI does not train its models on data submitted through the API.
+</p>
+<p>The developer of this extension does not receive, see, or have any way to access any of this data.</p>
+
+<h2>What the extension does not do</h2>
+<ul>
+  <li>It does not collect, transmit or sell your personal information.</li>
+  <li>It does not include analytics, telemetry, advertising or fingerprinting of any kind.</li>
+  <li>It does not send your data to any server other than the OpenAI API.</li>
+  <li>It does not read pages in the background. Page content is only ever read from the tab you are actively viewing, and only after you open the popup and act.</li>
+  <li>It does not use your data for creditworthiness, lending, or any purpose unrelated to the feature described in the store listing.</li>
+</ul>
+
+<h2>Permissions and why they are needed</h2>
+<ul>
+  <li><code>activeTab</code> — read the title, URL and text of the tab you are currently looking at, and only after you open the extension.</li>
+  <li><code>scripting</code> — run the text-extraction routine inside that page (and, on YouTube, open the transcript panel) so its content can be summarized.</li>
+  <li><code>storage</code> — keep your API key, settings and conversations.</li>
+  <li><code>unlimitedStorage</code> — let the Knowledge Base grow past the default quota, since saved page text and embeddings are large.</li>
+  <li><code>https://api.openai.com/*</code> — send the requests described above.</li>
+</ul>
+
+<h2>Your controls</h2>
+<ul>
+  <li><strong>Export</strong> — Settings → Your data → <em>Export as JSON</em> writes every conversation and saved page to a file. Your API key is deliberately excluded.</li>
+  <li><strong>Delete</strong> — Settings → Your data → <em>Delete all data</em> erases all conversations, drafts, saved pages, embeddings and the search index. History → <em>Clear all</em> erases just the chats, and individual items can be deleted one at a time.</li>
+  <li><strong>Uninstall</strong> — removing the extension from Chrome deletes everything it stored, including your API key.</li>
+</ul>
+<p>Deletion is immediate and permanent; there is no copy anywhere else to recover from.</p>
+
+<h2>Children</h2>
+<p>This extension is not directed at children and does not knowingly handle data from them.</p>
+
+<h2>Changes to this policy</h2>
+<p>
+  Material changes will be published on this page and noted in the extension's changelog
+  alongside a version bump. The "last updated" date above always reflects the current version.
+</p>
+
+<h2>Contact</h2>
+<p>
+  Questions, or a privacy concern? Please open an issue at
+  <a href="https://github.com/puscas-sergiu/webpage-context/issues">github.com/puscas-sergiu/webpage-context/issues</a>.
+</p>
+
+<footer>
+  Webpage Summarizer &amp; Chat is open source under the MIT licence —
+  <a href="https://github.com/puscas-sergiu/webpage-context">view the source</a>.
+</footer>
+
+</body>
+</html>
