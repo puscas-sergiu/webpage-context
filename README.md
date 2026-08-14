@@ -91,12 +91,21 @@ found automatically).
 
 ```bash
 bash tools/build.sh                  # dist/webpage-summarizer-chat-<version>.zip
+node tools/verify.mjs                # static wiring checks (runs inside build.sh)
+node tools/smoke.mjs                 # loads the extension in Chrome, end to end
 node tools/make-store-assets.mjs     # store/screenshots + promo tiles
 bash tools/make-icons.sh             # icon16/32/48/128.png from tools/*.svg
 ```
 
 `tools/build.sh` packages only the ten files the extension actually loads, and fails if
 anything referenced by `manifest.json`, `popup.html` or `importScripts()` is missing.
+
+`tools/verify.mjs` reads the source for wiring mistakes a syntax check misses — a
+`getElementById` with no matching element, a message type the background never handles,
+a store string over its character limit. `tools/smoke.mjs` goes further and loads the
+unpacked extension in headless Chrome, then round-trips real messages through the
+service worker to exercise registration, IndexedDB and `chrome.storage`. Neither needs
+an API key.
 
 The store screenshots are real renders, not mockups: `tools/make-store-assets.mjs` runs
 the actual popup against `tools/preview/mock.js`, a stub of the `chrome.*` APIs, then

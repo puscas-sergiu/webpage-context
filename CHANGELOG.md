@@ -20,6 +20,9 @@ First release prepared for the Chrome Web Store.
 - Store submission pack: privacy policy (`PRIVACY.md` plus a hostable HTML version),
   listing copy with per-permission justifications (`store/LISTING.md`), generated
   screenshots and promo tiles (`store/`), and a packaging script (`tools/build.sh`).
+- Pre-submission checks: `tools/verify.mjs` catches wiring mistakes in the source and
+  runs as part of the build, and `tools/smoke.mjs` loads the unpacked extension in
+  headless Chrome to round-trip messages through the real service worker.
 - MIT licence.
 
 ### Fixed

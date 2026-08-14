@@ -187,6 +187,7 @@ are needed to be eligible for featuring.
 
 ## Submission checklist
 
+- [ ] `node tools/smoke.mjs` passes (loads the extension in Chrome and exercises it)
 - [ ] `bash tools/build.sh` and upload `dist/webpage-summarizer-chat-<version>.zip`
 - [ ] Paste the listing copy above
 - [ ] Upload the screenshots and promo tiles
