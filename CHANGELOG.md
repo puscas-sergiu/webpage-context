@@ -3,6 +3,33 @@
 All notable changes to this project are documented here. This project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Ask answered from page summaries, not the pages.** Each source contributed its
+  2–3 sentence AI summary once enriched, so answers missed anything the summary left
+  out. Ask now quotes the passages of each source that best match the question.
+- **Only the first 8,000 characters of a page were searchable by meaning.** Saved pages
+  are now split into overlapping passages and every passage is embedded (one batched
+  request, 512-dimension vectors), so semantic search reaches the whole stored page.
+- **Keyword search ignored non-ASCII text.** The tokenizer understands any script,
+  folds accents (`café` ↔ `cafe`), and splits Chinese, Japanese and Korean into
+  character bigrams.
+- **Keyword ranking summed raw term counts.** It now uses BM25 (IDF weighting, length
+  normalization), and hybrid search fuses keyword and semantic rankings with reciprocal
+  rank fusion instead of averaging scores on unrelated scales.
+- **Irrelevant pages were always returned.** Matches below a similarity floor, or that
+  share only generic words with the query, are dropped; Ask says when nothing matches
+  instead of citing unrelated pages.
+- **Saving and deleting slowed down as the library grew.** Removing a page from the
+  keyword index scanned the whole index; each page's terms are now stored so only those
+  are touched.
+
+### Changed
+- Knowledge-base schema v2 (`chunks`, `docTerms` stores). The keyword index is rebuilt
+  automatically on upgrade. Pages saved before this version keep their whole-page
+  vector for semantic search until they are re-saved.
+
 ## [2.3.0] — 2026-08-14
 
 ### Fixed
