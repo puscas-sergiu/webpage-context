@@ -10,18 +10,24 @@ const path = require('path');
 const vm = require('vm');
 const { JSDOM } = require('jsdom');
 
-const SRC = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+const ROOT = path.join(__dirname, '..');
+const SRC = fs.readFileSync(path.join(ROOT, 'background.js'), 'utf8');
 
 const DEFAULT_HTML = '<!doctype html><html><body></body></html>';
 const DEFAULT_URL = 'https://www.youtube.com/watch?v=abc12345678';
 
-function loadBackground({ html = DEFAULT_HTML, url = DEFAULT_URL, globals = {} } = {}) {
+// With `withKbDb`, importScripts really loads kb-db.js into the sandbox, so the
+// knowledge-base code runs against whatever `indexedDB` the globals provide
+// (tests pass a fresh fake-indexeddb factory per case).
+function loadBackground({ html = DEFAULT_HTML, url = DEFAULT_URL, globals = {}, withKbDb = false } = {}) {
     const dom = new JSDOM(html, { url, runScripts: 'outside-only' });
     const sandbox = dom.getInternalVMContext();
 
     // Minimal service-worker environment: enough for background.js to evaluate.
     Object.assign(sandbox, {
-        importScripts: () => {},
+        importScripts: withKbDb
+            ? (...files) => files.forEach(file => vm.runInContext(fs.readFileSync(path.join(ROOT, file), 'utf8'), sandbox))
+            : () => {},
         console,
         setTimeout, clearTimeout, setInterval, clearInterval,
         chrome: {

@@ -9,7 +9,18 @@ const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
 const MAX_CONVERSATIONS = 100;   // pruned oldest-first beyond this
 const MAX_HISTORY_MESSAGES = 24; // messages sent to the API per request
 const KB_TOP_K = 6;              // sources retrieved for search/ask
-const KB_EMBED_CHARS = 8000;     // chars of content embedded per bookmark
+const KB_CHUNK_CHARS = 1200;     // target passage length for embeddings + Ask
+const KB_CHUNK_OVERLAP = 200;    // chars repeated between neighbouring passages
+const KB_MAX_CHUNKS = 24;        // passages per bookmark (24k chars of content)
+const KB_CHUNK_DIMS = 512;       // passage vector size (text-embedding-3 `dimensions`)
+const KB_PASSAGES_PER_SOURCE = 3; // passages quoted per source in Ask
+// Relevance gate. Below these, a match is treated as noise and dropped rather
+// than ranked. Starting values, not tuned on real libraries — adjust here.
+const KB_SEMANTIC_MIN = 0.25;          // cosine similarity, best passage vs. query
+const KB_LEXICAL_MIN_COVERAGE = 0.4;   // share of the query's IDF weight matched
+const KB_RRF_K = 60;             // reciprocal rank fusion damping (the standard value)
+const BM25_K1 = 1.2;
+const BM25_B = 0.75;
 
 // In-flight generations, keyed by conversation id.
 // { buffer, status, controller }
@@ -701,28 +712,37 @@ async function callOpenAI(apiKey, model, messages, onDelta, signal) {
     return full;
 }
 
-// Requests an embedding vector for the given text. Returns a Float32Array.
-async function callEmbeddings(apiKey, model, input, signal) {
+// Requests embeddings for one string or an array of strings. Returns a
+// Float32Array, or an array of them (in input order) when given an array.
+// `dimensions` shortens text-embedding-3 vectors server-side.
+async function callEmbeddings(apiKey, model, input, { dimensions, signal } = {}) {
     if (!apiKey) throw new Error('API key is missing.');
+    const body = { model: model || DEFAULT_EMBEDDING_MODEL, input };
+    if (dimensions) body.dimensions = dimensions;
     const response = await fetch(OPENAI_EMBEDDINGS_URL, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${apiKey}`
         },
-        body: JSON.stringify({ model: model || DEFAULT_EMBEDDING_MODEL, input }),
+        body: JSON.stringify(body),
         signal
     });
     if (!response.ok) {
-        const body = await response.json().catch(() => ({}));
-        throw new Error(apiErrorMessage(response.status, body));
+        const errorBody = await response.json().catch(() => ({}));
+        throw new Error(apiErrorMessage(response.status, errorBody));
     }
-    const body = await response.json();
-    const vector = body?.data?.[0]?.embedding;
-    if (!Array.isArray(vector) || !vector.length) {
+    const data = (await response.json())?.data || [];
+    const vectors = data
+        .slice()
+        .sort((x, y) => (x.index || 0) - (y.index || 0))
+        .map(row => row.embedding);
+    const expected = Array.isArray(input) ? input.length : 1;
+    if (vectors.length !== expected || vectors.some(v => !Array.isArray(v) || !v.length)) {
         throw new Error('Received an empty embedding from OpenAI.');
     }
-    return Float32Array.from(vector);
+    const out = vectors.map(v => Float32Array.from(v));
+    return Array.isArray(input) ? out : out[0];
 }
 
 // Search re-embeds the query on every debounced keystroke and on each search-mode
@@ -961,31 +981,58 @@ async function runGeneration(conv, mode, tab) {
 
 const STOPWORDS = new Set(('a an and are as at be by for from has have he in is it its of on or '
     + 'that the to was were will with this these those they you your i we our us not but если '
-    + 'about into over after before than then them their there here what when where which who how')
+    + 'about into over after before than then them their there here what when where which who how '
+    + 'why whom whose do does did done can could would should shall may might must been being had '
+    + 'if so no nor too very just also any all some more most other such only own same out up down '
+    + 'again me my mine tell say said says explain give get got')
     .split(/\s+/));
 
-// Lowercases, strips punctuation, splits on whitespace, drops stopwords and very
-// short tokens. Returns a de-duplicated array of terms. Shared by save + search.
-function tokenize(text) {
-    if (!text) return [];
-    const seen = new Set();
-    for (const raw of String(text).toLowerCase().split(/[^a-z0-9]+/)) {
-        if (raw.length < 2 || raw.length > 32) continue;
-        if (STOPWORDS.has(raw)) continue;
-        seen.add(raw);
+// Script_Extensions, not Script: the katakana prolonged-sound mark (ー) is
+// script Common, but its extensions list Hiragana and Katakana.
+const CJK_CHARS = '\\p{scx=Han}\\p{scx=Hiragana}\\p{scx=Katakana}\\p{scx=Hangul}';
+const CJK_TEST = new RegExp(`[${CJK_CHARS}]`, 'u');
+const CJK_RUNS = new RegExp(`[${CJK_CHARS}]+|[^${CJK_CHARS}]+`, 'gu');
+
+// Yields index terms in order, repeats included. Shared by indexing and search,
+// so both sides always agree on what a term is.
+//   - Unicode-aware: letters and digits in any script count, not just a–z.
+//   - Accents are folded ("café" matches "cafe"). Only the Latin/Greek/Cyrillic
+//     combining range is stripped, so Japanese voicing marks and Hangul survive
+//     the NFD → NFC round trip.
+//   - Chinese, Japanese and Korean are written without spaces, so runs in those
+//     scripts become overlapping character bigrams.
+function* termsOf(text) {
+    if (!text) return;
+    const folded = String(text).toLowerCase()
+        .normalize('NFD').replace(/[̀-ͯ]/g, '').normalize('NFC');
+    for (const word of folded.split(/[^\p{L}\p{N}]+/u)) {
+        if (!word) continue;
+        if (!CJK_TEST.test(word)) {
+            if (word.length >= 2 && word.length <= 32 && !STOPWORDS.has(word)) yield word;
+            continue;
+        }
+        for (const run of word.match(CJK_RUNS) || []) {
+            if (!CJK_TEST.test(run)) {
+                if (run.length >= 2 && run.length <= 32 && !STOPWORDS.has(run)) yield run;
+            } else if (run.length === 1) {
+                yield run;
+            } else {
+                for (let i = 0; i < run.length - 1; i++) yield run.slice(i, i + 2);
+            }
+        }
     }
-    return [...seen];
 }
 
-// Term-frequency map (term -> count) for indexing, weighting title/tags higher.
+// De-duplicated query terms.
+function tokenize(text) {
+    return [...new Set(termsOf(text))];
+}
+
+// Term-frequency map (term -> weighted count) for indexing, weighting title/tags higher.
 function termCounts(bookmark) {
     const counts = new Map();
     const add = (text, weight) => {
-        if (!text) return;
-        for (const raw of String(text).toLowerCase().split(/[^a-z0-9]+/)) {
-            if (raw.length < 2 || raw.length > 32 || STOPWORDS.has(raw)) continue;
-            counts.set(raw, (counts.get(raw) || 0) + weight);
-        }
+        for (const term of termsOf(text)) counts.set(term, (counts.get(term) || 0) + weight);
     };
     add(bookmark.aiTitle || bookmark.title, 5);
     add((bookmark.tags || []).join(' '), 4);
@@ -993,6 +1040,88 @@ function termCounts(bookmark) {
     add(bookmark.summary, 2);
     add(stripTimestamps(bookmark.pageContent), 1);
     return counts;
+}
+
+// The KB layer rebuilds the lexical index on schema upgrades and needs the
+// same term counter. (kb-db.js is absent when tests load this file.)
+if (typeof kbSetTermCounter === 'function') kbSetTermCounter(termCounts);
+
+// BM25 over the inverted index. Returns Map<bookmarkId, { score, coverage }>,
+// where coverage is the share of the query's IDF weight the document matched:
+// a page that matches only the generic words of a question scores low on it,
+// which is what the relevance gate in rankResults keys on. Query terms missing
+// from the index still count towards the total, so a query whose distinctive
+// word appears nowhere does not look covered.
+function scoreLexical(queryTerms, postingsByTerm, { docCount, avgLen }) {
+    const out = new Map();
+    if (!queryTerms.length || !docCount) return out;
+    const avg = avgLen || 1;
+    const idf = (df) => Math.log(1 + (docCount - df + 0.5) / (df + 0.5));
+    let totalIdf = 0;
+    for (const term of queryTerms) {
+        const postings = postingsByTerm.get(term) || [];
+        const weight = idf(postings.length);
+        totalIdf += weight;
+        for (const { bookmarkId, tf, len } of postings) {
+            const norm = tf + BM25_K1 * (1 - BM25_B + BM25_B * ((len || avg) / avg));
+            const entry = out.get(bookmarkId) || { score: 0, matchedIdf: 0 };
+            entry.score += weight * (tf * (BM25_K1 + 1)) / norm;
+            entry.matchedIdf += weight;
+            out.set(bookmarkId, entry);
+        }
+    }
+    for (const entry of out.values()) {
+        entry.coverage = totalIdf ? entry.matchedIdf / totalIdf : 0;
+        delete entry.matchedIdf;
+    }
+    return out;
+}
+
+// Splits text into overlapping passages of about KB_CHUNK_CHARS, breaking on
+// lines and sentence ends where possible. Transcript lines stay on their own
+// lines so the [m:ss] stamps keep leading them.
+function chunkText(text, size = KB_CHUNK_CHARS, overlap = KB_CHUNK_OVERLAP, max = KB_MAX_CHUNKS) {
+    const clean = (text || '').trim();
+    if (!clean) return [];
+    if (clean.length <= size) return [clean];
+    const sep = clean.includes('\n') ? '\n' : ' ';
+
+    const pieces = [];
+    for (const line of clean.split(/\n+/)) {
+        const sentences = line.match(/[^.!?。！？]+[.!?。！？]*\s*/g) || [line];
+        for (const sentence of sentences) {
+            let piece = sentence.trim();
+            while (piece.length > size) {
+                pieces.push(piece.slice(0, size));
+                piece = piece.slice(size);
+            }
+            if (piece) pieces.push(piece);
+        }
+    }
+
+    const chunks = [];
+    let current = [];
+    let length = 0;
+    for (const piece of pieces) {
+        if (current.length && length + piece.length + 1 > size) {
+            chunks.push(current.join(sep));
+            if (chunks.length >= max) return chunks;
+            // Carry the last sentences over so an idea split across the
+            // boundary is whole in at least one passage.
+            const carry = [];
+            let carried = 0;
+            for (let i = current.length - 1; i >= 0 && carried + current[i].length <= overlap; i--) {
+                carry.unshift(current[i]);
+                carried += current[i].length + 1;
+            }
+            current = carry;
+            length = carried;
+        }
+        current.push(piece);
+        length += piece.length + 1;
+    }
+    if (current.length) chunks.push(current.join(sep));
+    return chunks.slice(0, max);
 }
 
 function cosineSim(a, b) {
@@ -1005,6 +1134,51 @@ function cosineSim(a, b) {
     }
     if (!na || !nb) return 0;
     return dot / (Math.sqrt(na) * Math.sqrt(nb));
+}
+
+// text-embedding-3 vectors can be shortened by truncating and renormalizing —
+// the same thing the API's `dimensions` parameter does. That lets one
+// full-size query vector be compared against both legacy whole-document
+// vectors (1536) and passage vectors (KB_CHUNK_DIMS).
+function shortenVector(vector, dims) {
+    if (!vector || vector.length <= dims) return vector;
+    const out = vector.slice(0, dims);
+    let norm = 0;
+    for (let i = 0; i < out.length; i++) norm += out[i] * out[i];
+    norm = Math.sqrt(norm) || 1;
+    for (let i = 0; i < out.length; i++) out[i] /= norm;
+    return out;
+}
+
+// Combines per-document lexical and semantic evidence into a ranked list.
+//   lexical:  Map<id, { score, coverage }> from scoreLexical
+//   semantic: Map<id, similarity> (best passage, or the legacy doc vector)
+// Weak evidence is dropped first, so a question with no good match returns
+// nothing instead of the least-bad six pages. The survivors are fused with
+// reciprocal rank fusion, which needs no calibration between BM25 scores and
+// cosine similarities — they live on unrelated scales.
+// Returns [{ id, score, lexical, semantic }], best first.
+function rankResults(lexical, semantic, mode) {
+    const lexKept = [...lexical].filter(([, v]) => v.coverage >= KB_LEXICAL_MIN_COVERAGE)
+        .sort((a, b) => b[1].score - a[1].score).map(([id]) => id);
+    const semKept = [...semantic].filter(([, sim]) => sim >= KB_SEMANTIC_MIN)
+        .sort((a, b) => b[1] - a[1]).map(([id]) => id);
+
+    let lists;
+    if (mode === 'lexical') lists = [lexKept];
+    else if (mode === 'semantic') lists = semantic.size ? [semKept] : [lexKept]; // no vectors: keyword fallback
+    else lists = [lexKept, semKept];
+
+    const fused = new Map();
+    for (const list of lists) {
+        list.forEach((id, rank) => fused.set(id, (fused.get(id) || 0) + 1 / (KB_RRF_K + rank + 1)));
+    }
+    return [...fused].map(([id, score]) => ({
+        id,
+        score,
+        lexical: lexical.get(id)?.score || 0,
+        semantic: semantic.get(id) || 0
+    })).sort((a, b) => b.score - a.score);
 }
 
 function snippetFrom(bookmark) {
@@ -1049,9 +1223,10 @@ async function generateMetadata(apiKey, model, bookmark) {
     }
 }
 
-// Runs AI enrichment (metadata + embedding) for a freshly saved bookmark and
-// re-indexes it. Fire-and-forget from saveBookmark; broadcasts progress so the
-// popup can refresh. Each step is best-effort — the bookmark stays usable.
+// Runs AI enrichment (metadata + passage embeddings) for a freshly saved
+// bookmark and re-indexes it. Fire-and-forget from saveBookmark; broadcasts
+// progress so the popup can refresh. Each step is best-effort — the bookmark
+// stays usable.
 async function enrichBookmark(id) {
     const { apiKey, model, embeddingsEnabled } = await getSettings();
     if (!apiKey) return;
@@ -1062,20 +1237,34 @@ async function enrichBookmark(id) {
     const meta = await generateMetadata(apiKey, model, bookmark);
     Object.assign(bookmark, meta);
 
-    let vector = null;
-    if (embeddingsEnabled) {
-        try {
-            const input = `${bookmark.aiTitle || bookmark.title}\n${bookmark.summary || ''}\n`
-                + stripTimestamps(bookmark.pageContent).slice(0, KB_EMBED_CHARS);
-            vector = await callEmbeddings(apiKey, DEFAULT_EMBEDDING_MODEL, input);
-        } catch (e) {
-            console.warn('Embedding failed:', e);
+    // One vector per passage, covering the whole stored content rather than
+    // its opening. The title is prefixed so a passage that never names its
+    // subject still lands near it.
+    let chunkRows = null;
+    if (embeddingsEnabled && hasUsableContent(bookmark)) {
+        const passages = chunkText(bookmark.pageContent);
+        if (passages.length) {
+            try {
+                const title = bookmark.aiTitle || bookmark.title || '';
+                const inputs = passages.map(text => `${title}\n${stripTimestamps(text)}`);
+                const vectors = await callEmbeddings(apiKey, DEFAULT_EMBEDDING_MODEL, inputs, { dimensions: KB_CHUNK_DIMS });
+                chunkRows = passages.map((text, n) => ({
+                    id: `${id}:${n}`,
+                    bookmarkId: id,
+                    n,
+                    text,
+                    model: DEFAULT_EMBEDDING_MODEL,
+                    vector: vectors[n]
+                }));
+            } catch (e) {
+                console.warn('Embedding failed:', e);
+            }
         }
     }
 
     // Re-read before writing: the bookmark may have been deleted while we were
     // waiting on the (slow) metadata/embedding calls. Don't resurrect it — and
-    // don't leave an orphan vector behind for a bookmark that's gone.
+    // don't leave orphan vectors behind for a bookmark that's gone.
     const current = await kbGetBookmark(id);
     if (!current) return;
 
@@ -1083,72 +1272,102 @@ async function enrichBookmark(id) {
     current.enriched = true;
     current.updatedAt = Date.now();
     await kbPutBookmark(current);
-    if (vector) {
-        await kbPutVector({ bookmarkId: id, model: DEFAULT_EMBEDDING_MODEL, dims: vector.length, vector });
+    if (chunkRows) {
+        await kbPutChunks(id, chunkRows);
+        await kbDeleteVector(id); // superseded whole-document vector from v1
     }
-    await kbIndexRemove(id);
-    await kbIndexAdd(id, termCounts(current));
+    await kbIndexPut(id, termCounts(current));
     broadcast({ type: 'kbEnrichDone', id });
 }
 
-// Retrieves the top-K bookmarks for a query, blending lexical and semantic
-// scores when embeddings are available. Returns ranked metadata + snippet.
+// Best semantic similarity per bookmark: the closest passage, or for bookmarks
+// enriched before passages existed, their single whole-document vector.
+async function semanticScores(queryVector) {
+    const scores = new Map();
+    const short = shortenVector(queryVector, KB_CHUNK_DIMS);
+    for (const row of await kbAllChunks()) {
+        if (!row.vector) continue;
+        const sim = cosineSim(short, row.vector);
+        if (sim > (scores.get(row.bookmarkId) ?? -1)) scores.set(row.bookmarkId, sim);
+    }
+    for (const row of await kbAllVectors()) {
+        if (scores.has(row.bookmarkId)) continue;
+        scores.set(row.bookmarkId, cosineSim(shortenVector(queryVector, row.vector.length), row.vector));
+    }
+    return scores;
+}
+
+// Retrieves the top-K bookmarks for a query. Lexical (BM25) and semantic
+// (passage embeddings) evidence are gated for relevance and fused by rank —
+// see rankResults. Returns ranked metadata + snippet; may be empty.
 async function retrieveTopK(query, mode, k = KB_TOP_K) {
     const { apiKey, embeddingsEnabled } = await getSettings();
     const all = await kbAllBookmarks();
     const byId = new Map(all.map(b => [b.id, b]));
     const wantSemantic = (mode === 'semantic' || mode === 'hybrid') && embeddingsEnabled && apiKey;
 
-    // Semantic component (computed first so we know whether to fall back to lexical).
-    const semantic = new Map();
+    let semantic = new Map();
     if (wantSemantic) {
         try {
-            const qVec = await embedQuery(apiKey, query);
-            for (const row of await kbAllVectors()) {
-                semantic.set(row.bookmarkId, cosineSim(qVec, row.vector));
-            }
+            semantic = await semanticScores(await embedQuery(apiKey, query));
         } catch (e) {
             console.warn('Semantic search failed, falling back to lexical:', e);
         }
     }
 
-    // Lexical component. Always for lexical/hybrid; also as a fallback when a
-    // semantic search produced nothing (embeddings off, no vectors yet, or the
-    // embeddings API failed) so the user still gets keyword results.
-    const lexical = new Map();
-    const needLexical = mode !== 'semantic' || semantic.size === 0;
-    if (needLexical) {
-        const hits = await kbIndexLookup(tokenize(query));
-        let max = 0;
-        for (const { score } of hits.values()) max = Math.max(max, score);
-        for (const [id, { score }] of hits) lexical.set(id, max ? score / max : 0);
+    let lexical = new Map();
+    if (mode !== 'semantic' || semantic.size === 0) {
+        const terms = tokenize(query);
+        lexical = scoreLexical(terms, await kbIndexLookup(terms), await kbIndexStats());
     }
 
-    const ids = new Set([...lexical.keys(), ...semantic.keys()]);
-    const scored = [];
-    for (const id of ids) {
-        const meta = byId.get(id);
-        if (!meta) continue;
-        const lex = lexical.get(id) || 0;
-        const sem = semantic.get(id) || 0;
-        let score;
-        if (mode === 'semantic') score = semantic.size ? sem : lex; // fall back to lexical
-        else if (mode === 'lexical') score = lex;
-        else score = semantic.size ? 0.5 * lex + 0.5 * sem : lex; // hybrid
-        scored.push({ ...meta, score, snippet: snippetFrom(meta) });
-    }
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, k);
+    return rankResults(lexical, semantic, mode)
+        .filter(result => byId.has(result.id))
+        .slice(0, k)
+        .map(result => {
+            const meta = byId.get(result.id);
+            return { ...meta, score: result.score, snippet: snippetFrom(meta) };
+        });
 }
 
+// Picks the passages of one source that best answer the question, returned in
+// document order. Uses stored passage vectors when there are any; otherwise
+// (embeddings off, or a bookmark saved before passages existed) splits the text
+// here and ranks the pieces by how many of the question's terms they contain.
+// With no signal at all it falls back to the opening of the document.
+function selectPassages(bookmark, chunkRows, queryVector, queryTerms, count = KB_PASSAGES_PER_SOURCE) {
+    let passages;
+    if (chunkRows.length && queryVector && chunkRows.some(row => row.vector)) {
+        const short = shortenVector(queryVector, KB_CHUNK_DIMS);
+        passages = chunkRows.map(row => ({ n: row.n, text: row.text, score: row.vector ? cosineSim(short, row.vector) : 0 }));
+    } else {
+        const texts = chunkRows.length ? chunkRows.map(row => row.text) : chunkText(bookmark.pageContent || '');
+        const wanted = new Set(queryTerms);
+        passages = texts.map((text, n) => {
+            const tf = new Map();
+            for (const term of termsOf(text)) if (wanted.has(term)) tf.set(term, (tf.get(term) || 0) + 1);
+            let score = 0;
+            for (const count of tf.values()) score += 1 + Math.log(count);
+            return { n, text, score };
+        });
+    }
+    if (!passages.length) return [];
+    const best = passages.slice().sort((a, b) => b.score - a.score || a.n - b.n);
+    const picked = best[0].score > 0 ? best.slice(0, count) : passages.slice(0, count);
+    return picked.sort((a, b) => a.n - b.n).map(p => p.text);
+}
+
+// sources: [{ bookmark, passages }]
 function buildAskMessages(question, sources) {
     let context = '';
-    sources.forEach((source, i) => {
-        const body = (source.summary || stripTimestamps(source.pageContent) || '').slice(0, 2500);
-        context += `\n[${i + 1}] ${source.aiTitle || source.title} (${source.url})\n${body}\n`;
+    sources.forEach(({ bookmark, passages }, i) => {
+        context += `\n[${i + 1}] ${bookmark.aiTitle || bookmark.title} (${bookmark.url})\n`;
+        if (bookmark.summary) context += `Summary: ${bookmark.summary}\n`;
+        if (passages.length) context += `Excerpts:\n${passages.join('\n…\n')}\n`;
     });
     const system = 'You are answering questions using the user\'s saved knowledge base. '
-        + 'Use ONLY the numbered sources below. Cite them inline as [1], [2] matching the source numbers. '
+        + 'Use ONLY the numbered sources below; each has a summary and the excerpts most relevant to the question. '
+        + 'Cite them inline as [1], [2] matching the source numbers. Video excerpts carry [m:ss] timestamps — cite those too when useful. '
         + 'If the sources do not contain the answer, say so plainly. Format in Markdown.\n\nSources:' + context;
     return [
         { role: 'system', content: system },
@@ -1174,13 +1393,24 @@ async function runKBAsk(askId, question) {
         const sources = await retrieveTopK(question, 'hybrid');
         if (!sources.length) {
             kbAsks.delete(askId);
-            broadcast({ type: 'genDone', convId: askId, content: 'Your knowledge base has no saved pages matching this question yet.', sources: [] });
+            broadcast({ type: 'genDone', convId: askId, content: 'None of your saved pages match this question closely enough to answer it.', sources: [] });
             return;
         }
-        // Pull full content for the retrieved sources.
+        // Quote the passages of each source that match the question, rather
+        // than its summary alone or whatever its first few thousand chars are.
+        const { embeddingsEnabled } = await getSettings();
+        let queryVector = null;
+        if (embeddingsEnabled) {
+            try { queryVector = await embedQuery(apiKey, question); } catch { /* lexical passages instead */ }
+        }
+        const queryTerms = tokenize(question);
         const full = [];
         for (const source of sources) {
-            full.push((await kbGetBookmark(source.id)) || source);
+            const bookmark = (await kbGetBookmark(source.id)) || source;
+            const passages = hasUsableContent(bookmark)
+                ? selectPassages(bookmark, await kbGetChunks(source.id), queryVector, queryTerms)
+                : [];
+            full.push({ bookmark, passages });
         }
         setStatus('Thinking…');
         const messages = buildAskMessages(question, full);
@@ -1400,8 +1630,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
                         updatedAt: now
                     };
                     await kbPutBookmark(bookmark);
-                    await kbIndexRemove(bookmark.id);
-                    await kbIndexAdd(bookmark.id, termCounts(bookmark));
+                    await kbIndexPut(bookmark.id, termCounts(bookmark));
 
                     sendResponse({ ok: true, id: bookmark.id });
                     enrichBookmark(bookmark.id); // Continues after the response.
